@@ -43,6 +43,37 @@ export default function ClinicPortal() {
   const [searchQuery, setSearchQuery] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [clinicNotes, setClinicNotes] = useState('')
+  const [reportRatings, setReportRatings] = useState({})
+  const [reportComments, setReportComments] = useState({})
+
+  const handleRateReport = (key, rating) => {
+    setReportRatings(prev => ({ ...prev, [key]: { rating, submitted: false } }))
+  }
+
+  const handleCommentChange = (key, comment) => {
+    setReportComments(prev => ({ ...prev, [key]: comment }))
+  }
+
+  const handleSubmitRating = async (key, reportName) => {
+    const rating = reportRatings[key]?.rating
+    if (!rating) return
+    try {
+      await fetch('/api/feedback-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reportId: key,
+          userRole: 'clinician',
+          rating,
+          comments: reportComments[key] || '',
+          lesionMappings: reportName,
+        }),
+      })
+      setReportRatings(prev => ({ ...prev, [key]: { rating, submitted: true } }))
+    } catch (e) {
+      console.error('Failed to submit feedback:', e)
+    }
+  }
 
   const filteredPatients = useMemo(() => {
     if (!searchQuery) return MOCK_PATIENTS
@@ -300,29 +331,70 @@ export default function ClinicPortal() {
                 <span className="text-[9px] text-gray-400">Rate each report's clinical utility</span>
               </div>
               <div className="space-y-2 mb-5">
-                {patientDetail.activeReports.length > 0 ? patientDetail.activeReports.map((report, idx) => (
-                  <div key={idx} className="p-3 bg-gray-50 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <span className="text-sm">{idx === 0 ? '🆕' : '📄'}</span>
-                        <p className="text-xs font-medium text-gray-700">{report}</p>
+                {patientDetail.activeReports.length > 0 ? patientDetail.activeReports.map((report, idx) => {
+                  const repKey = report + idx
+                  const rated = reportRatings[repKey]?.rating || 0
+                  const submitted = reportRatings[repKey]?.submitted
+                  const showComment = rated > 0 && rated <= 3 && !submitted
+
+                  return (
+                    <div key={idx} className="p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-sm">{idx === 0 ? '🆕' : '📄'}</span>
+                          <p className="text-xs font-medium text-gray-700">{report}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button className="text-[10px] font-medium text-endo-purple hover:underline">Download PDF</button>
+                          <button className="text-[10px] text-gray-400 hover:text-gray-600">View</button>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button className="text-[10px] font-medium text-endo-purple hover:underline">Download PDF</button>
-                        <button className="text-[10px] text-gray-400 hover:text-gray-600">View</button>
+
+                      {/* Interactive Clinical Utility Score */}
+                      <div className="mt-2 pt-2 border-t border-gray-200">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] text-gray-400">Clinical Utility:</span>
+                          {submitted ? (
+                            <span className="text-[10px] text-green-600 font-medium">✅ Rated {rated}/5</span>
+                          ) : (
+                            [1, 2, 3, 4, 5].map(star => (
+                              <button key={star} onClick={() => handleRateReport(repKey, star)}
+                                className={`text-sm transition-all ${rated >= star ? 'text-amber-400 scale-110' : 'text-gray-300 hover:text-amber-300'}`}
+                                title={`Rate ${star}`}
+                              >{rated >= star ? '★' : '☆'}</button>
+                            ))
+                          )}
+                        </div>
+
+                        {/* Comment field for low ratings */}
+                        {showComment && (
+                          <div className="mt-2 flex gap-2">
+                            <input
+                              value={reportComments[repKey] || ''}
+                              onChange={e => handleCommentChange(repKey, e.target.value)}
+                              className="flex-1 text-[10px] px-2 py-1.5 rounded border border-gray-200 focus:border-indigo-400 outline-none"
+                              placeholder="Notes for AI refinement (e.g., suspected lesion location mismatch)..."
+                            />
+                            <button onClick={() => handleSubmitRating(repKey, report)}
+                              className="text-[10px] font-medium bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">
+                              Submit
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Quick submit for 4-5 star ratings */}
+                        {rated > 3 && !submitted && (
+                          <div className="mt-2">
+                            <button onClick={() => handleSubmitRating(repKey, report)}
+                              className="text-[10px] font-medium bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">
+                              Submit Rating
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
-                    {/* Clinical Utility Score */}
-                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-200">
-                      <span className="text-[9px] text-gray-400">Clinical Utility:</span>
-                      {[1, 2, 3, 4, 5].map(star => (
-                        <button key={star} className="text-sm hover:scale-110 transition-transform" title={`Rate ${star}`}>
-                          ☆
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )) : (
+                  )
+                }) : (
                   <p className="text-xs text-gray-400 py-3 text-center">No reports shared yet.</p>
                 )}
               </div>
