@@ -32,7 +32,7 @@ const RECENT_ACTIVITY = [
 
 const STATUS_CONFIG = {
   tracking: { label: 'TRACKING', class: 'bg-blue-100 text-blue-700' },
-  report_ready: { label: 'REPORT READY', class: 'bg-amber-100 text-amber-700' },
+  report_ready: { label: "REPORT READY", class: "bg-red-100 text-red-800 border border-red-200" },
   reviewing: { label: 'REVIEWED', class: 'bg-green-100 text-green-700' },
 }
 
@@ -187,7 +187,7 @@ export default function ClinicPortal() {
                   </div>
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Access Level</label>
-                    <select className="w-full text-xs px-2.5 py-2 rounded-lg border border-gray-200 focus:border-endo-purple outline-none bg-white">
+                    <select className="w-full text-xs px-2.5 py-2 rounded-lg border border-gray-200 focus:border-endo-purple outline-none bg-white" title="Standard: basic symptoms & cycle data. Advanced: includes surgical planning & treatment response mapping.">
                       <option>Standard</option>
                       <option>Advanced</option>
                     </select>
@@ -261,6 +261,7 @@ export default function ClinicPortal() {
                   <th className="text-left py-2.5 font-semibold text-gray-500">Quality</th>
                   <th className="text-left py-2.5 font-semibold text-gray-500">Phase</th>
                   <th className="text-left py-2.5 font-semibold text-gray-500">Reports</th>
+                  <th className="text-left py-2.5 font-semibold text-gray-500">Quick Action</th>
                   <th className="text-left py-2.5 font-semibold text-gray-500">Action</th>
                 </tr>
               </thead>
@@ -278,6 +279,16 @@ export default function ClinicPortal() {
                     <td className="py-3 text-[11px]">{'★'.repeat(p.quality)}{'☆'.repeat(5 - p.quality)}</td>
                     <td className="py-3 text-gray-500 capitalize">{p.phase}</td>
                     <td className="py-3 text-endo-purple text-[10px]">{p.activeReports.length > 0 ? p.activeReports.length + ' ready' : '—'}</td>
+                    <td className="py-3">
+                      {p.activeReports.length > 0 ? (
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedPatient(p.id); }} className="text-[10px] font-medium text-amber-600 hover:text-amber-800 flex items-center gap-1">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                          View Report
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="py-3">
                       <button className="text-[10px] font-medium text-endo-purple hover:underline">View Details</button>
                     </td>

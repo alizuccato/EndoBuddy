@@ -195,7 +195,7 @@ export default function ClinicianOnboarding({ onComplete }) {
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Default Sharing Level</label>
-              <select className="input-field text-sm bg-white">
+              <select className="input-field text-sm bg-white" title="Standard: basic symptoms & cycle data. Advanced: includes surgical planning & treatment response mapping.">
                 <option>Standard (Symptoms + Cycle Data)</option>
                 <option>Advanced (Includes Surgical Planning)</option>
               </select>
@@ -251,7 +251,7 @@ export default function ClinicianOnboarding({ onComplete }) {
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Invite Your First Patient</h3>
           <div className="space-y-3">
             <input className="input-field text-sm" placeholder="Patient Initials or ID" />
-            <select className="input-field text-sm bg-white">
+            <select className="input-field text-sm bg-white" title="Standard: basic symptoms & cycle data. Advanced: includes surgical planning & treatment response mapping.">
               <option>Standard Access</option>
               <option>Advanced Access</option>
             </select>
