@@ -73,11 +73,43 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
   const phase = currentPhase || 'luteal'
   const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
   const phaseData = PHASE_MEALS[phase] || PHASE_MEALS.luteal
-  const meals = flareMode && phaseData.flareUp ? phaseData.flareUp : phaseData.meals
+  const meals = getFilteredMeals(flareMode && phaseData.flareUp ? phaseData.flareUp : phaseData.meals)
 
   const toggleFilter = useCallback((filter) => {
     setActiveFilters(prev => prev.includes(filter) ? prev.filter(f => f !== filter) : [...prev, filter])
   }, [])
+
+  // Nut-Free runtime substitutions for phase meals containing nuts
+  const NUT_FREE_SUBSTITUTIONS = {
+    follicular: {
+      snack: [
+        { name: 'Sunflower Seed & Date Bites', why: 'Seeds provide vitamin E for endometrial health without nuts.' },
+        { name: 'Fresh Orange', why: 'Vitamin C boosts immune system.' }
+      ]
+    },
+    luteal: {
+      snack: [
+        { name: 'Dark Chocolate (verify nut-free)', why: 'Most 70%+ dark chocolate is nut-free. Pair with dried fruit instead of nuts.' },
+        { name: 'Roasted Chickpeas with Sea Salt', why: 'Crunchy, magnesium-rich, and naturally nut-free.' }
+      ]
+    }
+  }
+
+  // Apply nut-free filter to meals by swapping nut-containing items
+  const getFilteredMeals = useCallback((mealsData) => {
+    if (!activeFilters.includes('Nut-Free')) return mealsData
+    const phase = (currentPhase || 'luteal').toLowerCase()
+    const subs = NUT_FREE_SUBSTITUTIONS[phase]
+    if (!subs) return mealsData
+
+    const filtered = { ...mealsData }
+    for (const [mealType, replacements] of Object.entries(subs)) {
+      if (filtered[mealType]) {
+        filtered[mealType] = replacements
+      }
+    }
+    return filtered
+  }, [activeFilters, currentPhase])
 
   const handleGenerateShoppingList = useCallback(() => {
     setShowShoppingList(true)

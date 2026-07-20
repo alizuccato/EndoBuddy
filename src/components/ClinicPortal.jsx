@@ -15,7 +15,7 @@ const MOCK_PATIENTS = [
   { id: 'EB-912', name: 'Jane D.', status: 'report_ready', quality: 5, lastLog: '2 hours ago', phase: 'menstrual', activeReports: ['Surgical Planning Summary'], trackingSince: '4 months' },
   { id: 'EB-441', name: 'Sarah K.', status: 'reviewing', quality: 3, lastLog: '1 day ago', phase: 'luteal', activeReports: ['Treatment Response Dashboard'], trackingSince: '6 months' },
   { id: 'EB-002', name: 'Maria G.', status: 'tracking', quality: 4, lastLog: '5 hours ago', phase: 'follicular', activeReports: [], trackingSince: '2 months' },
-  { id: 'EB-337', name: 'Alex R.', status: 'report_ready', quality: 5, lastLog: '30 min ago', phase: 'ovulation', activeReports: ['Standard Summary', 'Surgical Planning Summary'], trackingSince: '8 months' },
+  { id: 'EB-337', name: 'Alex R.', status: 'report_ready', quality: 5, lastLog: '30 min ago', phase: 'ovulatory', activeReports: ['Standard Summary', 'Surgical Planning Summary'], trackingSince: '8 months' },
   { id: 'EB-881', name: 'Priya S.', status: 'tracking', quality: 2, lastLog: '3 days ago', phase: 'luteal', activeReports: [], trackingSince: '3 weeks' },
   { id: 'EB-554', name: 'Luna M.', status: 'reviewing', quality: 4, lastLog: '4 hours ago', phase: 'menstrual', activeReports: ['Standard Summary'], trackingSince: '5 months' },
   { id: 'EB-123', name: 'Claire W.', status: 'tracking', quality: 5, lastLog: '1 hour ago', phase: 'follicular', activeReports: [], trackingSince: '12 months' },

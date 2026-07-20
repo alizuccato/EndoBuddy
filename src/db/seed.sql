@@ -5,7 +5,7 @@
 INSERT OR IGNORE INTO cycle_phases (name, typical_day_range, description) VALUES
     ('menstrual',   '1-5',   'Period bleeding — low estrogen and progesterone'),
     ('follicular',  '6-14',  'Follicles develop — estrogen rises'),
-    ('ovulation',   '14',    'Egg released — estrogen peak'),
+    ('ovulatory',   '14',    'Egg released — estrogen peak'),
     ('luteal',      '15-28', 'Progesterone rises — PMS symptoms common');
 
 -- Symptoms

@@ -40,7 +40,7 @@ export default function PremiumVisualizations({
   // 7-Day Pain Forecast
   const forecast = useMemo(() => {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-    const phaseAverages = { menstrual: 7, follicular: 2, ovulation: 4, luteal: 5 }
+    const phaseAverages = { menstrual: 7, follicular: 2, ovulatory: 4, luteal: 5 }
 
     const phasePattern = (patterns || []).find(p => p.type === 'phase_correlation')
     if (phasePattern?.metric?.avgPain) {
@@ -55,7 +55,7 @@ export default function PremiumVisualizations({
 
     return days.map((day, i) => {
       const futureDay = ((currentDayNum + i - 1) % cycleLength) + 1
-      let phase = futureDay <= 5 ? 'menstrual' : futureDay <= 14 ? 'follicular' : futureDay <= 15 ? 'ovulation' : 'luteal'
+      let phase = futureDay <= 5 ? 'menstrual' : futureDay <= 14 ? 'follicular' : futureDay <= 15 ? 'ovulatory' : 'luteal'
       const base = phaseAverages[phase] || 4
       const predicted = Math.max(1, Math.min(10, Math.round(base + (Math.random() - 0.5) * 2)))
       return { day, predicted, phase, isToday: i === 0 }
@@ -147,8 +147,8 @@ export default function PremiumVisualizations({
           <div className="grid grid-cols-2 gap-3">
             {PHASE_ORDER.map(phase => {
               const style = PHASE_STYLES[phase]
-              const currentAvg = phase === 'menstrual' ? 7 : phase === 'follicular' ? 1.3 : phase === 'ovulation' ? 3 : 4.5
-              const baseAvg = phase === 'menstrual' ? 6 : phase === 'follicular' ? 2 : phase === 'ovulation' ? 3.5 : 4
+              const currentAvg = phase === 'menstrual' ? 7 : phase === 'follicular' ? 1.3 : phase === 'ovulatory' ? 3 : 4.5
+              const baseAvg = phase === 'menstrual' ? 6 : phase === 'follicular' ? 2 : phase === 'ovulatory' ? 3.5 : 4
               const diff = currentAvg - baseAvg
               const isWorse = diff > 0
               return (

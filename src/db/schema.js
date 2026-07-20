@@ -65,7 +65,7 @@ export const PAIN_TYPES = [
 
 export const FLOW_LEVELS = ['light', 'medium', 'heavy', 'spotting']
 
-export const CYCLE_PHASES_LIST = ['menstrual', 'follicular', 'ovulation', 'luteal']
+export const CYCLE_PHASES_LIST = ['menstrual', 'follicular', 'ovulatory', 'luteal']
 
 export const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack']
 

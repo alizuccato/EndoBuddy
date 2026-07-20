@@ -37,7 +37,7 @@ export default function CycleMap({ cycleData }) {
     const phaseDays = {
       menstrual: { start: 0, end: periodLength || 5 },
       follicular: { start: periodLength || 5, end: 14 },
-      ovulation: { start: 14, end: 15 },
+      ovulatory: { start: 14, end: 15 },
       luteal: { start: 15, end: totalDays },
     }
     

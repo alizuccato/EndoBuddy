@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS cycle_phases (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    name            TEXT NOT NULL UNIQUE,      -- menstrual, follicular, ovulation, luteal
+    name            TEXT NOT NULL UNIQUE,      -- menstrual, follicular, ovulatory, luteal
     typical_day_range TEXT,                    -- e.g., "1-5"
     description     TEXT
 );
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS cycle_phases (
 INSERT OR IGNORE INTO cycle_phases (name, typical_day_range, description) VALUES
     ('menstrual',   '1-5',   'Period bleeding — low estrogen and progesterone'),
     ('follicular',  '6-14',  'Follicles develop — estrogen rises'),
-    ('ovulation',   '14',    'Egg released — estrogen peak'),
+    ('ovulatory',   '14',    'Egg released — estrogen peak'),
     ('luteal',      '15-28', 'Progesterone rises — PMS symptoms common');
 
 -- ============================================================
