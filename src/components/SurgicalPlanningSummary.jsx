@@ -10,14 +10,19 @@ import { useState, useMemo } from 'react'
 
 // Symptom Pattern → Lesion Location Mapping (from clinical-logic-advanced-reports.md)
 const LESION_MAP = [
-  { id: 1, pattern: 'One-sided pelvic pain', painType: ['sharp', 'stabbing'], minSeverity: 6, timing: ['ovulation', 'menstrual'], location: 'Ovarian endometrioma / ovarian lesion', confidence: 'High', rationale: 'Ovulation pain suggests ovarian involvement; one-sided points to specific ovary.' },
+  { id: 1, pattern: 'One-sided pelvic pain', painType: ['sharp', 'stabbing'], minSeverity: 6, timing: ['ovulatory', 'menstrual'], location: 'Ovarian endometrioma / ovarian lesion', confidence: 'High', rationale: 'Ovulation pain suggests ovarian involvement; one-sided points to specific ovary.' },
   { id: 2, pattern: 'Deep pain during intercourse', painType: ['deep', 'burning'], minSeverity: 5, timing: ['menstrual', 'luteal'], location: 'DIE — uterosacral ligaments, pouch of Douglas, rectovaginal septum', confidence: 'Very High', rationale: 'Dyspareunia is one of the strongest predictors of DIE.' },
   { id: 3, pattern: 'Painful bowel movements', painType: ['sharp'], minSeverity: 5, timing: ['menstrual'], location: 'Bowel endometriosis — rectosigmoid colon, rectum', confidence: 'High', rationale: 'Cyclical dyschezia is highly predictive of bowel involvement.' },
   { id: 4, pattern: 'Cyclical diarrhea/constipation', painType: [], minSeverity: 0, timing: ['luteal', 'menstrual'], location: 'Bowel endometriosis — rectosigmoid', confidence: 'Moderate' },
+  { id: 5, pattern: 'Rectal bleeding during menstruation', painType: [], minSeverity: 0, timing: ['menstrual'], location: 'Full-thickness bowel endometriosis', confidence: 'Very High', rationale: 'Cyclical rectal bleeding (hematochezia that occurs ONLY during menstruation) is considered pathognomonic for full-thickness bowel endometriosis.' },
   { id: 6, pattern: 'Painful urination', painType: ['burning', 'stinging'], minSeverity: 4, timing: ['menstrual'], location: 'Bladder endometriosis', confidence: 'High' },
+  { id: 7, pattern: 'Blood in urine during menstruation', painType: [], minSeverity: 0, timing: ['menstrual'], location: 'Full-thickness bladder endometriosis', confidence: 'Very High', rationale: 'Cyclical hematuria that occurs ONLY during menstruation is considered diagnostic for transmural bladder endometriosis.' },
   { id: 8, pattern: 'Radiating leg pain', painType: ['shooting'], minSeverity: 5, timing: ['menstrual'], location: 'Sciatic nerve endometriosis', confidence: 'High' },
   { id: 9, pattern: 'Deep low back pain', painType: ['dull', 'aching'], minSeverity: 4, timing: ['menstrual'], location: 'Uterosacral ligament endometriosis', confidence: 'Moderate' },
+  { id: 10, pattern: 'Severe nausea and vomiting during menstruation', painType: [], minSeverity: 7, timing: ['menstrual'], location: 'Pelvic inflammatory response / severe systemic prostaglandin surge', confidence: 'Low', rationale: 'Non-specific symptom driven by systemic prostaglandin release rather than a specific lesion location.' },
   { id: 11, pattern: 'Pain with sitting', painType: ['sharp', 'dull'], minSeverity: 4, timing: ['menstrual'], location: 'Rectovaginal septum, posterior fornix', confidence: 'Moderate' },
+  { id: 13, pattern: 'Shoulder tip pain during menstruation', painType: ['sharp'], minSeverity: 5, timing: ['menstrual'], location: 'Diaphragmatic endometriosis (rare)', confidence: 'Low', rationale: 'Referred shoulder tip pain during menstruation via phrenic nerve. Rare but clinically significant.' },
+  { id: 14, pattern: 'Chest pain or shortness of breath at period onset', painType: ['sharp'], minSeverity: 5, timing: ['menstrual'], location: 'Thoracic endometriosis syndrome (catamenial pneumothorax)', confidence: 'Very High', rationale: 'Cyclical chest pain within 24-72 hours of menstruation onset is highly suggestive of thoracic endometriosis syndrome.' },
   { id: 15, pattern: 'Multiple co-occurring symptoms', painType: [], minSeverity: 6, timing: ['menstrual'], location: 'Multiple lesion sites — Stage 3-4 endometriosis', confidence: 'Very High' },
 ]
 
