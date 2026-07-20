@@ -82,7 +82,7 @@ export default function OnboardingFlow({ onComplete, onSkip }) {
     
     if (cycleDay <= 5) return 'menstrual'
     if (cycleDay <= 14) return 'follicular'
-    if (cycleDay === 15) return 'ovulation'
+    if (cycleDay === 15) return 'ovulatory'
     return 'luteal'
   }, [onboardingData.lastPeriodStart, onboardingData.cycleLength])
 

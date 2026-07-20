@@ -222,7 +222,8 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
       </div>
 
       {/* ====== THE REPORT ====== */}
-      <div className="report-container bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-lg">
+      <div className="report-content">
+        <div className="report-container bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-lg">
         {/* Page 1: Clinical Summary */}
         <div className="p-8 print:p-6">
           {/* Header */}
@@ -485,6 +486,7 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
             Always consult a qualified healthcare provider for medical decisions. Patient name field accepts real name or pseudonym — your choice.
           </p>
         </div>
+      </div>
       </div>
 
       {/* Print styles */}

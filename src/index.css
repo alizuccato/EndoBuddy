@@ -36,3 +36,25 @@
     @apply w-3 h-3 rounded-full inline-block;
   }
 }
+
+/* Print styles for Doctor Reports */
+@media print {
+  body * { visibility: hidden; }
+  .report-content, .report-content * { visibility: visible; }
+  .report-content { position: absolute; left: 0; top: 0; width: 100%; }
+  .no-print { display: none !important; }
+  button, nav, footer, .no-print { display: none !important; }
+  @page { margin: 1.5cm; }
+}
+
+/* Fade-in animation for view transitions */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 0.2s ease-out; }
+
+/* Safe area insets for mobile */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

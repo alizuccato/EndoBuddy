@@ -222,7 +222,7 @@ function App() {
           </div>
         )}
 
-        <main className="flex-1">
+        <main className="flex-1 animate-fadeIn">
           {showLoggingFlow ? (
             <LoggingFlow
               onComplete={handleLogComplete}
@@ -263,11 +263,34 @@ function App() {
         )}
 
         {!showLoggingFlow && (
-          <footer className="bg-gray-50 border-t border-gray-100 px-6 py-4 text-center text-sm text-gray-400">
+          <footer className="bg-gray-50 border-t border-gray-100 px-6 py-4 text-center text-sm text-gray-400 hidden md:block">
             EndoBuddy &mdash; Empowering your cycle journey with data
           </footer>
         )}
       </div>
+
+      {/* Mobile Bottom Navigation */}
+      {!showLoggingFlow && !showPremiumUpgrade && (
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex md:hidden z-40 safe-area-bottom shadow-lg">
+          {[
+            { id: 'home', label: 'Home', icon: '🌸' },
+            { id: 'log', label: 'Log', icon: '➕' },
+            { id: 'insights', label: 'Insights', icon: '📊' },
+            { id: 'reports', label: 'Reports', icon: '📋' },
+            { id: 'premium', label: 'Premium', icon: '⭐' },
+          ].map(item => (
+            <button key={item.id} onClick={() => { setCurrentView(item.id); setShowLoggingFlow(item.id === 'log') }}
+              className={`flex-1 flex flex-col items-center py-2 text-[10px] transition-colors ${
+                currentView === item.id ? 'text-endo-purple' : 'text-gray-400 hover:text-gray-600'
+              }`}
+              aria-current={currentView === item.id ? 'page' : undefined}
+            >
+              <span className="text-lg mb-0.5">{item.icon}</span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      )}
 
       {/* Premium Upgrade Overlay */}
       {showPremiumUpgrade && (

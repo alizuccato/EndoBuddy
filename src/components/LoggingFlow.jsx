@@ -53,14 +53,14 @@ export default function LoggingFlow({ onComplete, onClose }) {
 
   const handleSelect = useCallback((field, value) => {
     if (field === '_next') {
-      // Trigger next step from child components
-      if (currentStep === 'pain') goToStep('symptoms')
-      else if (currentStep === 'symptoms') goToStep('cycle')
-      else if (currentStep === 'cycle') goToStep('notes')
+      // Trigger next step from child components — goToStep is stable
+      if (currentStep === 'pain') { setCurrentStep('symptoms'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+      else if (currentStep === 'symptoms') { setCurrentStep('cycle'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+      else if (currentStep === 'cycle') { setCurrentStep('notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
       return
     }
     setLogData(prev => ({ ...prev, [field]: value }))
-  }, [currentStep, goToStep])
+  }, [currentStep])
 
   const goToStep = useCallback((step) => {
     setCurrentStep(step)
@@ -124,7 +124,7 @@ export default function LoggingFlow({ onComplete, onClose }) {
                   {/* Step dot */}
                   <div className={`
                     flex items-center justify-center
-                    w-8 h-8 rounded-full text-xs font-bold
+                    w-11 h-11 rounded-full text-xs font-bold
                     transition-all duration-200
                     ${isActive 
                       ? 'bg-endo-purple text-white shadow-md scale-110' 

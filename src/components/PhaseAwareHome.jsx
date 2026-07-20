@@ -29,7 +29,7 @@ const PHASE_CONTENT = {
     move: { icon: '🏋️', title: 'Moderate Strength Training', desc: 'Build muscle while energy levels are peaking.' },
     rest: { icon: '🛌', title: 'Anchor your consistent bedtime', desc: 'Build routine while your sleep is naturally better.' },
   },
-  ovulation: {
+  ovulatory: {
     theme: { bg: 'bg-gradient-to-b from-yellow-50 to-amber-50/30', card: 'bg-white/90', accent: '#EAB308', ring: '#FDE047' },
     greeting: "Energy peaks today. Enjoy the social surge!",
     meal: { icon: '🥙', title: 'Buddha bowl with quinoa & beets', desc: 'Fiber-rich meal supporting estrogen metabolism.' },

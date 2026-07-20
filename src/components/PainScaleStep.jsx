@@ -51,7 +51,7 @@ export default function PainScaleStep({ onSelect, selectedValue }) {
       </div>
 
       {/* Pain Scale Grid */}
-      <div className="grid grid-cols-5 gap-3 max-w-md mx-auto">
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-3 max-w-md mx-auto">
         {PAIN_LEVELS.map((level) => {
           const isSelected = selectedValue === level.value
           const isHovered = hoveredValue === level.value

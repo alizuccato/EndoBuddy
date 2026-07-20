@@ -21,7 +21,7 @@ function generateCycleDays() {
     let phase
     if (dayNum <= 5) phase = 'menstrual'
     else if (dayNum <= 14) phase = 'follicular'
-    else if (dayNum === 15) phase = 'ovulation'
+    else if (dayNum === 15) phase = 'ovulatory'
     else phase = 'luteal'
     
     // Generate realistic pain patterns
@@ -44,7 +44,7 @@ function generateCycleDays() {
           { id: 3, name: 'Fatigue', icon: '😴', category: 'general' },
         ]
       }
-    } else if (phase === 'ovulation') {
+    } else if (phase === 'ovulatory') {
       painLevel = Math.floor(Math.random() * 3) + 3 // 3-5
       symptoms = [
         { id: 1, name: 'Bloating', icon: '🫃', category: 'digestive' },
@@ -186,7 +186,7 @@ export const PHASE_STYLES = {
     dot: 'bg-green-400',
     description: 'Follicles develop — estrogen rises. Energy is building.',
   },
-  ovulation: {
+  ovulatory: {
     label: 'Ovulatory',
     color: '#EAB308',
     bg: 'bg-yellow-50',
@@ -207,4 +207,4 @@ export const PHASE_STYLES = {
 }
 
 // Phase order for the cycle map
-export const PHASE_ORDER = ['menstrual', 'follicular', 'ovulation', 'luteal']
+export const PHASE_ORDER = ['menstrual', 'follicular', 'ovulatory', 'luteal']

@@ -35,7 +35,7 @@ const PHASE_MEALS = {
     },
     flareUp: null,
   },
-  ovulation: {
+  ovulatory: {
     focus: 'Fiber-rich, liver-supporting foods for estrogen metabolism',
     meals: {
       breakfast: { name: 'Chia Pudding with Berries', why: 'Chia seeds are high in fiber and omega-3s.' },
@@ -62,7 +62,7 @@ const PHASE_MEALS = {
   },
 }
 
-const DIETARY_FILTERS = ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free']
+const DIETARY_FILTERS = ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free']
 
 export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
   const [flareMode, setFlareMode] = useState(false)
