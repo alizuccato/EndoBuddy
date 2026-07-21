@@ -36,7 +36,12 @@ function parseBody(req) {
   })
 }
 
-
+// Ensure session table exists at startup
+try {
+  teamDb("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT)")
+} catch (e) {
+  console.error("Failed to create sessions table:", e.message)
+}
 
 // Password hashing with scrypt (salt + hash)
 function hashPassword(password) {
@@ -45,12 +50,18 @@ function hashPassword(password) {
   return salt + ':' + hash
 }
 
+// Ensure database password verification works smoothly
 function verifyPassword(password, stored) {
-  const parts = stored.split(':')
-  const salt = parts[0]
-  const hash = parts[1]
-  const derived = scryptSync(password, salt, 64).toString('hex')
-  return timingSafeEqual(Buffer.from(derived), Buffer.from(hash))
+  try {
+    const parts = stored.split(':')
+    if (parts.length < 2) return false
+    const salt = parts[0]
+    const hash = parts[1]
+    const derived = scryptSync(password, salt, 64).toString('hex')
+    return timingSafeEqual(Buffer.from(derived), Buffer.from(hash))
+  } catch (e) {
+    return false
+  }
 }
 
 // Generate a simple session token
@@ -58,16 +69,132 @@ function generateToken() {
   return randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '')
 }
 
+// ===== SECURITY HELPERS =====
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+function isValidUUID(id) {
+  return typeof id === 'string' && UUID_REGEX.test(id)
+}
+function escapeStr(str) {
+  if (str == null) return 'NULL'
+  return "'" + String(str).replace(/'/g, "''") + "'"
+}
+function isValidDate(str) {
+  if (!str || typeof str !== 'string') return false
+  return /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(Date.parse(str))
+}
+function isValidNumber(val) {
+  if (val === null || val === undefined) return false
+  const num = Number(val)
+  return typeof val !== 'object' && !isNaN(num) && isFinite(num)
+}
+function requireUUID(val, name) {
+  if (!isValidUUID(val)) throw new Error('Invalid ' + (name || 'UUID') + ': ' + val)
+  return val
+}
+
+// ===== CORS ORIGIN HARDENING =====
+const ALLOWED_ORIGINS = [
+  'https://endobuddy.ctonew.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:3001'
+]
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : 'https://endobuddy.ctonew.app'
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+}
+
+// ===== IN-MEMORY RATE LIMITING =====
+const rateLimitMap = new Map()
+function checkRateLimit(req, res, isStrict = false) {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'
+  const now = Date.now()
+  const limit = isStrict ? 15 : 120 // Generous limits to allow seamless UI navigation
+  const windowMs = 60000 // 1 minute
+  
+  if (!rateLimitMap.has(ip)) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + windowMs })
+    return true
+  }
+  
+  const data = rateLimitMap.get(ip)
+  if (now > data.resetTime) {
+    data.count = 1
+    data.resetTime = now + windowMs
+    return true
+  }
+  
+  data.count++
+  if (data.count > limit) {
+    res.writeHead(429, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'Too many requests. Please try again in a minute.' }))
+    return false
+  }
+  return true
+}
+
+// ===== AUTHENTICATION & AUTHORIZATION MIDDLEWARE =====
+function getAuthenticatedUserId(req) {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null
+  }
+  const token = authHeader.split(' ')[1]
+  if (!token || token.length < 10) return null
+  
+  try {
+    const rows = teamDb(`SELECT user_id FROM sessions WHERE token = ${escapeStr(token)}`)
+    if (rows.length === 0) return null
+    return rows[0].user_id
+  } catch (e) {
+    return null
+  }
+}
+
+function verifyUserAuth(req, res, targetUserId) {
+  try {
+    const userRows = teamDb(`SELECT email FROM users WHERE id = ${escapeStr(targetUserId)}`)
+    if (userRows.length === 0) {
+      res.writeHead(404, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'User not found' }))
+      return false
+    }
+    
+    const user = userRows[0]
+    
+    // If the user has a registered email, they MUST be authenticated via session token matching targetUserId
+    if (user.email) {
+      const authUserId = getAuthenticatedUserId(req)
+      if (!authUserId) {
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Authentication token required (Bearer)' }))
+        return false
+      }
+      if (authUserId !== targetUserId) {
+        res.writeHead(403, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Access denied: You do not have permission to access this resource' }))
+        return false
+      }
+    }
+    return true
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'Internal server error during auth verification' }))
+    return false
+  }
+}
 
 function json(res, data, status = 200) {
   res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Content-Type': 'application/json'
   })
   res.end(JSON.stringify(data))
 }
+
+try { teamDb(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT)`) } catch (e) {}
 
 const router = {
   // Health check
@@ -80,39 +207,104 @@ const router = {
     const body = await parseBody(req)
     const id = randomUUID()
     const now = new Date().toISOString()
-    teamDb(`INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at) VALUES ('${id}', '${body.displayName || ''}', ${body.dateOfBirth ? `'${body.dateOfBirth}'` : 'NULL'}, '${body.timezone || 'UTC'}', ${body.cycleLength || 28}, ${body.lastPeriodStart ? `'${body.lastPeriodStart}'` : 'NULL'}, '${body.role || 'patient'}', ${body.clinicName ? `'${body.clinicName}'` : 'NULL'}, ${body.specialty ? `'${body.specialty}'` : 'NULL'}, 1, '${now}', '${now}')`)
+    
+    // Input validation & sanitization
+    const safeName = escapeStr(body.displayName || '')
+    const safeDob = isValidDate(body.dateOfBirth) ? escapeStr(body.dateOfBirth) : 'NULL'
+    const safeTz = escapeStr(body.timezone || 'UTC')
+    const safeCycle = isValidNumber(body.cycleLength) ? Number(body.cycleLength) : 28
+    const safeLps = isValidDate(body.lastPeriodStart) ? escapeStr(body.lastPeriodStart) : 'NULL'
+    const safeRole = ['patient', 'clinician', 'admin'].includes(body.role) ? escapeStr(body.role) : escapeStr('patient')
+    const safeClinic = escapeStr(body.clinicName || '')
+    const safeSpecialty = escapeStr(body.specialty || '')
+    
+    teamDb(`INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty) VALUES (${escapeStr(id)}, ${safeName}, ${safeDob}, ${safeTz}, ${safeCycle}, ${safeLps}, 1, ${escapeStr(now)}, ${escapeStr(now)}, ${safeRole}, ${safeClinic}, ${safeSpecialty})`)
     json(res, { id, ...body }, 201)
   },
 
   'GET /api/users/:id': (req, res, params) => {
-    const rows = teamDb(`SELECT * FROM users WHERE id = '${params.id}'`)
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.id)) return
+    
+    const rows = teamDb(`SELECT * FROM users WHERE id = ${escapeStr(params.id)}`)
     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
     json(res, rows[0])
   },
 
   'PUT /api/users/:id': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.id)) return
+    
     const body = await parseBody(req)
     const now = new Date().toISOString()
-    const updates = Object.entries(body)
-      .filter(([k]) => k !== 'id')
-      .map(([k, v]) => `${k} = ${v === null || v === undefined ? 'NULL' : `'${v}'`}`)
-      .join(', ')
-    teamDb(`UPDATE users SET ${updates}, updated_at = '${now}' WHERE id = '${params.id}'`)
-    json(res, { id: params.id, ...body })
+    
+    // Strict allowlist of updatable fields with DB column mapping
+    const ALLOWED_FIELDS = {
+      displayName: 'display_name',
+      dateOfBirth: 'date_of_birth',
+      timezone: 'timezone',
+      cycleLength: 'cycle_length_avg',
+      lastPeriodStart: 'last_period_start',
+      onboardingComplete: 'onboarding_complete',
+      clinicName: 'clinic_name',
+      specialty: 'specialty',
+      email: 'email',
+    }
+    
+    const updates = []
+    for (const [field, dbCol] of Object.entries(ALLOWED_FIELDS)) {
+      if (body[field] !== undefined && body[field] !== null) {
+        let val = body[field]
+        if (field === 'dateOfBirth' || field === 'lastPeriodStart') {
+          val = isValidDate(val) ? escapeStr(val) : 'NULL'
+        } else if (typeof val === 'string') {
+          val = escapeStr(val)
+        } else if (field === 'cycleLength' || field === 'onboardingComplete') {
+          val = isValidNumber(val) ? Number(val) : 'NULL'
+        } else {
+          val = 'NULL'
+        }
+        updates.push(`${dbCol} = ${val}`)
+      }
+    }
+    
+    if (updates.length === 0) return json(res, { error: 'No valid fields to update' }, 400)
+    teamDb(`UPDATE users SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
+    json(res, { id: params.id, updated: true })
   },
 
   // ===== DAILY LOGS =====
   'POST /api/logs': async (req, res) => {
     const body = await parseBody(req)
+    if (!isValidUUID(body.userId)) return json(res, { error: 'Invalid or missing user ID' }, 400)
+    if (!verifyUserAuth(req, res, body.userId)) return
+    
+    if (!isValidDate(body.logDate)) return json(res, { error: 'Invalid or missing log date' }, 400)
+    
     const id = randomUUID()
     const now = new Date().toISOString()
-    teamDb(`INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES ('${id}', '${body.userId}', '${body.logDate}', ${body.cycleDay || 'NULL'}, ${body.cyclePhase ? `'${body.cyclePhase}'` : 'NULL'}, ${body.isPeriodDay ? 1 : 0}, ${body.flowLevel ? `'${body.flowLevel}'` : 'NULL'}, ${body.painLevel || 'NULL'}, ${body.overallWellness || 'NULL'}, ${body.notes ? `'${body.notes.replace(/'/g, "''")}'` : 'NULL'}, '${now}', '${now}')`)
+    
+    // Validate optional inputs
+    const cycleDay = isValidNumber(body.cycleDay) ? Number(body.cycleDay) : 'NULL'
+    const cyclePhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? escapeStr(body.cyclePhase) : 'NULL'
+    const isPeriodDay = body.isPeriodDay ? 1 : 0
+    const flowLevel = ['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? escapeStr(body.flowLevel) : 'NULL'
+    const painLevel = (isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : 'NULL'
+    const overallWellness = (isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : 'NULL'
+    const notes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
+    
+    teamDb(`INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${escapeStr(body.logDate)}, ${cycleDay}, ${cyclePhase}, ${isPeriodDay}, ${flowLevel}, ${painLevel}, ${overallWellness}, ${notes}, ${escapeStr(now)}, ${escapeStr(now)})`)
     
     // Save symptoms
-    if (body.symptoms && body.symptoms.length > 0) {
+    if (body.symptoms && Array.isArray(body.symptoms) && body.symptoms.length > 0) {
       for (const symptom of body.symptoms) {
+        if (!symptom.name) continue
         const sid = randomUUID()
-        teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES ('${sid}', '${id}', '${symptom.name.replace(/'/g, "''")}', '${symptom.icon || ''}', ${symptom.severity || 5}, '${now}')`)
+        const safeSymName = escapeStr(symptom.name)
+        const safeSymIcon = escapeStr(symptom.icon || '')
+        const safeSeverity = (isValidNumber(symptom.severity) && symptom.severity >= 1 && symptom.severity <= 10) ? Number(symptom.severity) : 5
+        
+        teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(id)}, ${safeSymName}, ${safeSymIcon}, ${safeSeverity}, ${escapeStr(now)})`)
       }
     }
     
@@ -120,42 +312,71 @@ const router = {
   },
 
   'GET /api/logs/:userId': (req, res, params) => {
-    const rows = teamDb(`SELECT * FROM daily_logs WHERE user_id = '${params.userId}' ORDER BY log_date DESC LIMIT 90`)
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.userId)) return
+    
+    const rows = teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} ORDER BY log_date DESC LIMIT 90`)
     json(res, rows)
   },
 
   'GET /api/logs/:userId/:date': (req, res, params) => {
-    const rows = teamDb(`SELECT * FROM daily_logs WHERE user_id = '${params.userId}' AND log_date = '${params.date}'`)
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.userId)) return
+    if (!isValidDate(params.date)) return json(res, { error: 'Invalid date format (must be YYYY-MM-DD)' }, 400)
+    
+    const rows = teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} AND log_date = ${escapeStr(params.date)}`)
     if (rows.length === 0) return json(res, null)
     const log = rows[0]
-    const symptoms = teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = '${log.id}'`)
+    const symptoms = teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(log.id)}`)
     json(res, { ...log, symptoms })
   },
 
   // ===== SYMPTOMS FOR A LOG =====
   'GET /api/symptoms/:logId': (req, res, params) => {
-    const rows = teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = '${params.logId}' ORDER BY severity DESC`)
+    if (!isValidUUID(params.logId)) return json(res, { error: 'Invalid log ID format' }, 400)
+    
+    // Resolve log first to check authorization
+    const logRows = teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.logId)}`)
+    if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
+    if (!verifyUserAuth(req, res, logRows[0].user_id)) return
+    
+    const rows = teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.logId)} ORDER BY severity DESC`)
     json(res, rows)
   },
 
   // ===== CYCLES =====
   'POST /api/cycles': async (req, res) => {
     const body = await parseBody(req)
+    if (!isValidUUID(body.userId)) return json(res, { error: 'Invalid or missing user ID' }, 400)
+    if (!verifyUserAuth(req, res, body.userId)) return
+    
+    if (!isValidDate(body.periodStart)) return json(res, { error: 'Invalid or missing period start date' }, 400)
+    
     const id = randomUUID()
     const now = new Date().toISOString()
-    teamDb(`INSERT INTO cycles (id, user_id, period_start, period_end, notes, created_at) VALUES ('${id}', '${body.userId}', '${body.periodStart}', ${body.periodEnd ? `'${body.periodEnd}'` : 'NULL'}, ${body.notes ? `'${body.notes.replace(/'/g, "''")}'` : 'NULL'}, '${now}')`)
+    const safeStart = escapeStr(body.periodStart)
+    const safeEnd = isValidDate(body.periodEnd) ? escapeStr(body.periodEnd) : 'NULL'
+    const safeNotes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
+    
+    teamDb(`INSERT INTO cycles (id, user_id, period_start, period_end, notes, created_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${safeStart}, ${safeEnd}, ${safeNotes}, ${escapeStr(now)})`)
     json(res, { id, ...body }, 201)
   },
 
   'GET /api/cycles/:userId': (req, res, params) => {
-    const rows = teamDb(`SELECT * FROM cycles WHERE user_id = '${params.userId}' ORDER BY period_start DESC`)
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.userId)) return
+    
+    const rows = teamDb(`SELECT * FROM cycles WHERE user_id = ${escapeStr(params.userId)} ORDER BY period_start DESC`)
     json(res, rows)
   },
 
   // ===== INSIGHTS =====
   'GET /api/insights/:userId': (req, res, params) => {
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.userId)) return
+    
     // Calculate pain-by-phase from logged data
-    const logRows = teamDb(`SELECT dl.cycle_phase, dl.pain_level, dl.log_date FROM daily_logs dl WHERE dl.user_id = '${params.userId}' AND dl.pain_level IS NOT NULL ORDER BY dl.log_date`)
+    const logRows = teamDb(`SELECT dl.cycle_phase, dl.pain_level, dl.log_date FROM daily_logs dl WHERE dl.user_id = ${escapeStr(params.userId)} AND dl.pain_level IS NOT NULL ORDER BY dl.log_date`)
     
     if (logRows.length === 0) {
       return json(res, { painByPhase: {}, avgPain: null, totalLogs: 0 })
@@ -185,12 +406,15 @@ const router = {
 
   // ===== AI PATTERN RECOGNITION =====
   'GET /api/patterns/:userId': (req, res, params) => {
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.userId)) return
+    
     const userId = params.userId
     const patterns = []
 
     // 1. Fetch all logs with symptoms
     const logRows = teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day 
-      FROM daily_logs dl WHERE dl.user_id = '${userId}' AND dl.pain_level IS NOT NULL 
+      FROM daily_logs dl WHERE dl.user_id = ${escapeStr(userId)} AND dl.pain_level IS NOT NULL 
       ORDER BY dl.log_date ASC`)
     
     if (logRows.length < 5) {
@@ -218,8 +442,8 @@ const router = {
     // ============================================================
     // ANALYSIS 1: Phase-Symptom Correlation
     // ============================================================
-    const phasePain = { menstrual: [], follicular: [], ovulation: [], luteal: [] }
-    const phaseSymptoms = { menstrual: {}, follicular: {}, ovulation: {}, luteal: {} }
+    const phasePain = { menstrual: [], follicular: [], ovulatory: [], luteal: [] }
+    const phaseSymptoms = { menstrual: {}, follicular: {}, ovulatory: {}, luteal: {} }
     
     for (const row of logRows) {
       const phase = row.cycle_phase
@@ -304,7 +528,6 @@ const router = {
     // ============================================================
     // ANALYSIS 2: Symptom Clusters
     // ============================================================
-    // Find pairs of symptoms that frequently occur together
     const symptomCooccurrence = {}
     const symptomCount = {}
     
@@ -353,7 +576,6 @@ const router = {
     // ============================================================
     // ANALYSIS 3: Trend Detection
     // ============================================================
-    // Split logs into first half and second half to compare trends
     if (logRows.length >= 10) {
       const mid = Math.floor(logRows.length / 2)
       const firstHalf = logRows.slice(0, mid)
@@ -383,7 +605,6 @@ const router = {
     // ============================================================
     // ANALYSIS 4: Flare-up Pattern Detection
     // ============================================================
-    // Detect if severe pain (7+) days tend to cluster
     let consecutiveSevere = 0
     const severeClusters = []
     for (const row of logRows) {
@@ -413,7 +634,7 @@ const router = {
     }
 
     // ============================================================
-    // ANALYSIS 5: Weekly Pattern (day-of-week patterns)
+    // ANALYSIS 5: Weekly Pattern
     // ============================================================
     const dayOfWeekPain = Array(7).fill(0).map(() => [])
     for (const row of logRows) {
@@ -450,18 +671,30 @@ const router = {
       }
     }
 
-    // Sort by confidence descending
     patterns.sort((a, b) => b.confidence - a.confidence)
-
     json(res, { patterns })
   },
 
   // ===== FEEDBACK =====
   'POST /api/feedback': async (req, res) => {
     const body = await parseBody(req)
+    
+    // Input validation
+    if (!body.feedbackType) return json(res, { error: 'Missing feedbackType' }, 400)
+    if (!isValidNumber(body.rating) || body.rating < 1 || body.rating > 5) {
+      return json(res, { error: 'Rating must be an integer between 1 and 5' }, 400)
+    }
+    
     const id = randomUUID()
     const now = new Date().toISOString()
-    teamDb(`INSERT INTO clinical_feedback (id, user_id, feedback_type, target_id, target_label, rating, comment, created_at) VALUES ('${id}', '${body.userId || 'anonymous'}', '${body.feedbackType}', '${body.targetId || ''}', '${(body.targetLabel || '').replace(/'/g, "''")}', ${body.rating}, ${body.comment ? `'${body.comment.replace(/'/g, "''")}'` : 'NULL'}, '${now}')`)
+    const safeUserId = escapeStr(body.userId || 'anonymous')
+    const safeType = escapeStr(body.feedbackType)
+    const safeTargetId = escapeStr(body.targetId || '')
+    const safeTargetLabel = escapeStr(body.targetLabel || '')
+    const safeRating = Number(body.rating)
+    const safeComment = body.comment ? escapeStr(String(body.comment)) : 'NULL'
+    
+    teamDb(`INSERT INTO clinical_feedback (id, user_id, feedback_type, target_id, target_label, rating, comment, created_at) VALUES (${escapeStr(id)}, ${safeUserId}, ${safeType}, ${safeTargetId}, ${safeTargetLabel}, ${safeRating}, ${safeComment}, ${escapeStr(now)})`)
     json(res, { id, submitted: true }, 201)
   },
 
@@ -473,12 +706,23 @@ const router = {
   // ===== FEEDBACK LOGS (Report Utility) =====
   'POST /api/feedback-logs': async (req, res) => {
     const body = await parseBody(req)
+    
+    // Input validation
+    if (!isValidNumber(body.rating) || body.rating < 1 || body.rating > 5) {
+      return json(res, { error: 'Rating must be an integer between 1 and 5' }, 400)
+    }
+    
     const id = randomUUID()
     const now = new Date().toISOString()
-    teamDb(`INSERT INTO feedback_logs (id, report_id, user_role, rating, comments, lesion_mappings, created_at) VALUES ('${id}', '${body.reportId || ''}', '${body.userRole || 'patient'}', ${body.rating}, ${body.comments ? `'${body.comments.replace(/'/g, "''")}'` : 'NULL'}, ${body.lesionMappings ? `'${body.lesionMappings.replace(/'/g, "''")}'` : 'NULL'}, '${now}')`)
+    const safeReportId = escapeStr(body.reportId || '')
+    const safeRole = escapeStr(body.userRole || 'patient')
+    const safeRating = Number(body.rating)
+    const safeComments = body.comments ? escapeStr(String(body.comments)) : 'NULL'
+    const safeLesionMappings = body.lesionMappings ? escapeStr(String(body.lesionMappings)) : 'NULL'
+    
+    teamDb(`INSERT INTO feedback_logs (id, report_id, user_role, rating, comments, lesion_mappings, created_at) VALUES (${escapeStr(id)}, ${safeReportId}, ${safeRole}, ${safeRating}, ${safeComments}, ${safeLesionMappings}, ${escapeStr(now)})`)
     json(res, { id, submitted: true }, 201)
   },
-
 
   // ===== AUTHENTICATION =====
   'POST /api/register': async (req, res) => {
@@ -492,7 +736,8 @@ const router = {
       return json(res, { error: 'Password must be at least 6 characters' }, 400)
     }
     
-    const existing = teamDb(`SELECT id FROM users WHERE email = '${email.toLowerCase()}'`)
+    const safeEmail = email.toLowerCase()
+    const existing = teamDb(`SELECT id FROM users WHERE email = ${escapeStr(safeEmail)}`)
     if (existing.length > 0) {
       return json(res, { error: 'Email already registered' }, 409)
     }
@@ -500,16 +745,20 @@ const router = {
     const id = randomUUID()
     const now = new Date().toISOString()
     const passwordHash = hashPassword(password)
-    const userRole = role || 'patient'
+    const userRole = ['patient', 'clinician', 'admin'].includes(role) ? role : 'patient'
     
-    const escName = (displayName || '').replace(/'/g, "''")
-    const escClinic = clinicName ? `'${clinicName.replace(/'/g, "''")}'` : 'NULL'
-    const escSpecialty = specialty ? `'${specialty.replace(/'/g, "''")}'` : 'NULL'
+    const safeName = escapeStr(displayName || '')
+    const safeClinic = clinicName ? escapeStr(clinicName) : 'NULL'
+    const safeSpecialty = specialty ? escapeStr(specialty) : 'NULL'
     
-    teamDb(`INSERT INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES ('${id}', '${escName}', '${email.toLowerCase()}', '${passwordHash}', '${userRole}', ${escClinic}, ${escSpecialty}, 0, '${now}', '${now}')`)
+    // Insert new user
+    teamDb(`INSERT INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES (${escapeStr(id)}, ${safeName}, ${escapeStr(safeEmail)}, ${escapeStr(passwordHash)}, ${escapeStr(userRole)}, ${safeClinic}, ${safeSpecialty}, 0, ${escapeStr(now)}, ${escapeStr(now)})`)
     
+    // Create and save session token
     const token = generateToken()
-    json(res, { id, email: email.toLowerCase(), displayName: displayName || '', role: userRole, token }, 201)
+    teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(id)}, ${escapeStr(now)})`)
+    
+    json(res, { id, email: safeEmail, displayName: displayName || '', role: userRole, token }, 201)
   },
 
   'POST /api/login': async (req, res) => {
@@ -520,7 +769,8 @@ const router = {
       return json(res, { error: 'Email and password are required' }, 400)
     }
     
-    const rows = teamDb(`SELECT id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete FROM users WHERE email = '${email.toLowerCase()}'`)
+    const safeEmail = email.toLowerCase()
+    const rows = teamDb(`SELECT id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete FROM users WHERE email = ${escapeStr(safeEmail)}`)
     if (rows.length === 0) {
       return json(res, { error: 'Invalid email or password' }, 401)
     }
@@ -530,7 +780,11 @@ const router = {
       return json(res, { error: 'Invalid email or password' }, 401)
     }
     
+    // Create and save session token
     const token = generateToken()
+    const now = new Date().toISOString()
+    teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(user.id)}, ${escapeStr(now)})`)
+    
     json(res, {
       id: user.id,
       email: user.email,
@@ -544,7 +798,10 @@ const router = {
   },
 
   'GET /api/me/:userId': (req, res, params) => {
-    const rows = teamDb(`SELECT id, display_name, email, role, clinic_name, specialty, onboarding_complete, cycle_length_avg, last_period_start, created_at FROM users WHERE id = '${params.userId}'`)
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!verifyUserAuth(req, res, params.userId)) return
+    
+    const rows = teamDb(`SELECT id, display_name, email, role, clinic_name, specialty, onboarding_complete, cycle_length_avg, last_period_start, created_at FROM users WHERE id = ${escapeStr(params.userId)}`)
     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
     const u = rows[0]
     json(res, {
@@ -569,25 +826,45 @@ const router = {
     const patientId = randomUUID()
     const patientHash = hashPassword('test123')
     teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${patientId}', 'Test Patient', 'patient@endobuddy.test', '${patientHash}', 'patient', 1, '${now}', '${now}')`)
-    results.push({ email: 'patient@endobuddy.test', password: 'test123', role: 'patient', id: patientId })
+    teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testpatienttoken', '${patientId}', '${now}')`)
+    results.push({ email: 'patient@endobuddy.test', password: 'test123', role: 'patient', id: patientId, token: 'testpatienttoken' })
     
     // Seed clinician account
     const clinicianId = randomUUID()
     const clinicianHash = hashPassword('test123')
     teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES ('${clinicianId}', 'Dr. Smith', 'clinician@endobuddy.test', '${clinicianHash}', 'clinician', 'Endo Care Center', 'Minimally Invasive Gynecology', 1, '${now}', '${now}')`)
-    results.push({ email: 'clinician@endobuddy.test', password: 'test123', role: 'clinician', id: clinicianId })
+    teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testcliniciantoken', '${clinicianId}', '${now}')`)
+    results.push({ email: 'clinician@endobuddy.test', password: 'test123', role: 'clinician', id: clinicianId, token: 'testcliniciantoken' })
     
     // Seed admin account
     const adminId = randomUUID()
     const adminHash = hashPassword('admin123')
     teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${adminId}', 'Admin', 'admin@endobuddy.test', '${adminHash}', 'admin', 1, '${now}', '${now}')`)
-    results.push({ email: 'admin@endobuddy.test', password: 'admin123', role: 'admin', id: adminId })
+    teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testadmintoken', '${adminId}', '${now}')`)
+    results.push({ email: 'admin@endobuddy.test', password: 'admin123', role: 'admin', id: adminId, token: 'testadmintoken' })
     
     json(res, { seeded: true, accounts: results })
   },
 
   'POST /api/seed/:userId': (req, res, params) => {
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
     const userId = params.userId
+    
+    // Only allow seeding for new users (onboarding_complete = 0 and no existing logs)
+    const userRows = teamDb(`SELECT onboarding_complete, email FROM users WHERE id = ${escapeStr(userId)}`)
+    if (userRows.length === 0) return json(res, { error: 'User not found' }, 404)
+    
+    // Authentication check for non-anonymous accounts
+    if (userRows[0].email && !verifyUserAuth(req, res, userId)) return
+    
+    if (userRows[0].onboarding_complete !== 0) {
+      return json(res, { error: 'Seed data can only be generated for new users (before onboarding is complete)' }, 403)
+    }
+    const logCount = teamDb(`SELECT COUNT(*) as cnt FROM daily_logs WHERE user_id = ${escapeStr(userId)}`)
+    if (logCount[0].cnt > 0) {
+      return json(res, { error: 'Seed data can only be generated for users with no existing logs' }, 403)
+    }
+    
     const now = new Date()
     
     // Generate 30 days of realistic sample data
@@ -599,12 +876,12 @@ const router = {
       let phase, painLevel, flowLevel
       if (dayNum <= 5) { phase = 'menstrual'; painLevel = Math.floor(Math.random() * 3) + 6; flowLevel = ['heavy','medium','light','spotting',null][dayNum - 1] }
       else if (dayNum <= 14) { phase = 'follicular'; painLevel = Math.max(0, Math.floor(Math.random() * 3)) }
-      else if (dayNum === 15) { phase = 'ovulation'; painLevel = Math.floor(Math.random() * 3) + 3 }
+      else if (dayNum === 15) { phase = 'ovulatory'; painLevel = Math.floor(Math.random() * 3) + 3 }
       else { phase = 'luteal'; painLevel = Math.floor(Math.random() * 4) + 3 }
       
       try {
         const logId = randomUUID()
-        teamDb(`INSERT OR IGNORE INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, pain_level, flow_level, created_at, updated_at) VALUES ('${logId}', '${userId}', '${dateStr}', ${dayNum}, '${phase}', ${painLevel}, ${flowLevel ? `'${flowLevel}'` : 'NULL'}, '${now.toISOString()}', '${now.toISOString()}')`)
+        teamDb(`INSERT OR IGNORE INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, pain_level, flow_level, created_at, updated_at) VALUES (${escapeStr(logId)}, ${escapeStr(userId)}, ${escapeStr(dateStr)}, ${dayNum}, ${escapeStr(phase)}, ${painLevel}, ${flowLevel ? escapeStr(flowLevel) : 'NULL'}, ${escapeStr(now.toISOString())}, ${escapeStr(now.toISOString())})`)
         
         // Add symptoms for higher pain days
         if (painLevel >= 3) {
@@ -615,7 +892,7 @@ const router = {
           ]
           for (const s of symptoms.slice(0, Math.floor(Math.random() * 3) + 1)) {
             const sid = randomUUID()
-            teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES ('${sid}', '${logId}', '${s.name}', '${s.icon}', ${painLevel}, '${now.toISOString()}')`)
+            teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(logId)}, ${escapeStr(s.name)}, ${escapeStr(s.icon)}, ${painLevel}, ${escapeStr(now.toISOString())})`)
           }
         }
       } catch (e) {
@@ -628,13 +905,12 @@ const router = {
 
 // Create server
 const server = createServer((req, res) => {
+  // CORS origin check and headers
+  setCorsHeaders(req, res)
+  
   // CORS preflight
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    })
+    res.writeHead(204)
     return res.end()
   }
 
@@ -643,6 +919,10 @@ const server = createServer((req, res) => {
   const path = url.pathname
   const key = `${req.method} ${path}`
   
+  // Check rate limiting on all requests
+  const isStrict = ['/api/register', '/api/login', '/api/seed'].some(route => path.startsWith(route))
+  if (!checkRateLimit(req, res, isStrict)) return
+
   // Try exact match first
   if (router[key]) {
     return router[key](req, res, {})
