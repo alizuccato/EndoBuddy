@@ -73,7 +73,6 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
   const phase = currentPhase || 'luteal'
   const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
   const phaseData = PHASE_MEALS[phase] || PHASE_MEALS.luteal
-  const meals = getFilteredMeals(flareMode && phaseData.flareUp ? phaseData.flareUp : phaseData.meals)
 
   const toggleFilter = useCallback((filter) => {
     setActiveFilters(prev => prev.includes(filter) ? prev.filter(f => f !== filter) : [...prev, filter])
@@ -98,8 +97,8 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
   // Apply nut-free filter to meals by swapping nut-containing items
   const getFilteredMeals = useCallback((mealsData) => {
     if (!activeFilters.includes('Nut-Free')) return mealsData
-    const phase = (currentPhase || 'luteal').toLowerCase()
-    const subs = NUT_FREE_SUBSTITUTIONS[phase]
+    const phaseLower = (currentPhase || 'luteal').toLowerCase()
+    const subs = NUT_FREE_SUBSTITUTIONS[phaseLower]
     if (!subs) return mealsData
 
     const filtered = { ...mealsData }
@@ -110,6 +109,8 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
     }
     return filtered
   }, [activeFilters, currentPhase])
+
+  const meals = getFilteredMeals(flareMode && phaseData.flareUp ? phaseData.flareUp : phaseData.meals)
 
   const handleGenerateShoppingList = useCallback(() => {
     setShowShoppingList(true)

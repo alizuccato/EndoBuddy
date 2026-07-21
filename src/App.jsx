@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import LoggingFlow from './components/LoggingFlow'
 import InsightsDashboard from './components/InsightsDashboard'
 import OnboardingFlow from './components/OnboardingFlow'
@@ -31,6 +31,7 @@ function App() {
   const [todayLogged, setTodayLogged] = useState(false)
   const [userId, setUserId] = useState(null)
   const [userRole, setUserRole] = useState(null)
+  const [userProfile, setUserProfile] = useState(null)
 
   useEffect(() => {
     async function checkUser() {
@@ -38,6 +39,7 @@ function App() {
       const user = await getUser(existingUserId)
       if (user && user.onboarding_complete) {
         setUserId(user.id)
+        setUserProfile(user)
         setUserRole(user.role || 'patient')
         setShowLogin(false)
         setShowOnboarding(false)
@@ -60,10 +62,20 @@ function App() {
     checkUser()
   }, [])
 
-  const handleLoginComplete = useCallback((userData) => {
+  const handleLoginComplete = useCallback(async (userData) => {
     setUserId(userData.id)
     setUserRole(userData.role || 'patient')
     setShowLogin(false)
+    try {
+      const fullUser = await getUser(userData.id)
+      if (fullUser) {
+        setUserProfile(fullUser)
+      } else {
+        setUserProfile(userData)
+      }
+    } catch {
+      setUserProfile(userData)
+    }
     if (userData.role === 'clinician') { setShowOnboarding(false); setCurrentView('clinic') }
     else { setShowOnboarding(true); setCurrentView('home') }
   }, [])
@@ -84,7 +96,11 @@ function App() {
   }, [userId])
 
   const handleOnboardingComplete = useCallback(async (data) => {
-    try { const user = await completeOnboarding(data); setUserId(user.id) }
+    try { 
+      const user = await completeOnboarding(data)
+      setUserId(user.id)
+      setUserProfile(user)
+    }
     catch (e) { console.error('Failed to save onboarding:', e); setUserId(getUserId()) }
     setShowOnboarding(false)
   }, [])
@@ -97,6 +113,41 @@ function App() {
 
   const isPatient = userRole === 'patient'
   const isClinician = userRole === 'clinician'
+
+  const cycleData = useMemo(() => {
+    const cycleLength = userProfile?.cycleLength || userProfile?.cycle_length_avg || 28;
+    const lastPeriodStart = userProfile?.lastPeriodStart || userProfile?.last_period_start;
+    if (!userProfile || !lastPeriodStart) {
+      return mockCycleData
+    }
+    try {
+      const today = new Date()
+      const start = new Date(lastPeriodStart)
+      if (isNaN(start.getTime())) return mockCycleData
+      
+      const dayDiff = Math.floor((today.getTime() - start.getTime()) / 86400000)
+      const currentDayNum = ((dayDiff % cycleLength) + cycleLength) % cycleLength + 1
+      
+      let currentPhase = 'follicular'
+      if (currentDayNum <= 5) currentPhase = 'menstrual'
+      else if (currentDayNum <= 14) currentPhase = 'follicular'
+      else if (currentDayNum === 15) currentPhase = 'ovulatory'
+      else currentPhase = 'luteal'
+      
+      return {
+        ...mockCycleData,
+        currentPhase,
+        currentDayNum,
+        cycleStartDate: lastPeriodStart,
+        cycleLength,
+        periodLength: 5,
+        isRealData: true
+      }
+    } catch (e) {
+      console.error('Error computing cycle data:', e)
+      return mockCycleData
+    }
+  }, [userProfile])
 
   const patientNavItems = [
     { id: 'home', label: 'Home', icon: '\u{1F338}' },
@@ -171,10 +222,10 @@ function App() {
 
         <main className="flex-1 animate-fadeIn">
           {isPatient && showLoggingFlow && <LoggingFlow onComplete={handleLogComplete} onClose={handleCloseLogging} />}
-          {isPatient && !showLoggingFlow && currentView==='home' && <PhaseAwareHome onStartLogging={handleOpenLogging} todayLogged={todayLogged} recentLogs={recentLogs} cycleData={mockCycleData} isPremium={isPremium} onUpgrade={handleStartUpgrade} />}
-          {isPatient && !showLoggingFlow && currentView==='insights' && <InsightsDashboard cycleData={mockCycleData} insights={mockInsights} />}
-          {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} />}
-          {currentView==='reports' && <ReportsView recentLogs={recentLogs} />}
+          {isPatient && !showLoggingFlow && currentView==='home' && <PhaseAwareHome onStartLogging={handleOpenLogging} todayLogged={todayLogged} recentLogs={recentLogs} cycleData={cycleData} isPremium={isPremium} onUpgrade={handleStartUpgrade} />}
+          {isPatient && !showLoggingFlow && currentView==='insights' && <InsightsDashboard cycleData={cycleData} insights={mockInsights} />}
+          {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} cycleData={cycleData} />}
+          {currentView==='reports' && <ReportsView recentLogs={recentLogs} cycleData={cycleData} />}
           {isClinician && currentView==='clinic' && <ClinicPortal />}
           {!showLoggingFlow && currentView==='home' && isClinician && (
             <div className="max-w-lg mx-auto px-6 py-12 text-center">
@@ -234,7 +285,7 @@ function NavBtn({ currentView, view, onClick, active, children }) {
   )
 }
 
-function ReportsView({ recentLogs }) {
+function ReportsView({ recentLogs, cycleData }) {
   const [showFeedback, setShowFeedback] = useState(true)
   if (recentLogs.length === 0) return (
     <div className="max-w-4xl mx-auto px-6 py-8 pb-24 md:pb-8">
@@ -248,7 +299,7 @@ function ReportsView({ recentLogs }) {
   )
   return (
     <>
-      <DoctorReport cycleData={mockCycleData} insights={mockInsights} onBack={()=>{}} />
+      <DoctorReport cycleData={cycleData} insights={mockInsights} onBack={()=>{}} />
       <div className="max-w-4xl mx-auto px-6 pb-8">
         {showFeedback && <FeedbackPrompt type="doctor_report" targetId="report-1" targetLabel="Clinical Doctor Report" onDismiss={()=>setShowFeedback(false)} />}
       </div>
@@ -267,9 +318,9 @@ function LockedFeature({ onUpgrade }) {
   )
 }
 
-function PremiumView({ isPremium, onUpgrade }) {
+function PremiumView({ isPremium, onUpgrade, cycleData }) {
   const [premiumTab, setPremiumTab] = useState('meals')
-  const phase = mockCycleData?.currentPhase || 'luteal'
+  const phase = cycleData?.currentPhase || 'luteal'
   return (
     <div className="max-w-4xl mx-auto px-6 py-8 pb-24 md:pb-8">
       <div className="flex items-center justify-between mb-6">
@@ -284,10 +335,10 @@ function PremiumView({ isPremium, onUpgrade }) {
         ))}
       </div>
       {premiumTab==='meals'&&<PremiumMealPlans currentPhase={phase} isPremium={isPremium}/>}
-      {premiumTab==='deep'&&<div className="space-y-4"><PremiumDeepReport cycleData={mockCycleData} patterns={mockInsights} isPremium={isPremium}/></div>}
+      {premiumTab==='deep'&&<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={mockInsights} isPremium={isPremium}/></div>}
       {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={mockInsights}/>:<LockedFeature onUpgrade={onUpgrade}/>)}
       {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard/>:<LockedFeature onUpgrade={onUpgrade}/>)}
-      {premiumTab==='viz'&&<PremiumVisualizations patterns={mockInsights} isPremium={isPremium} currentPhase={mockCycleData?.currentPhase} currentDayNum={mockCycleData?.currentDayNum} cycleLength={mockCycleData?.cycleLength}/>}
+      {premiumTab==='viz'&&<PremiumVisualizations patterns={mockInsights} isPremium={isPremium} currentPhase={cycleData?.currentPhase} currentDayNum={cycleData?.currentDayNum} cycleLength={cycleData?.cycleLength}/>}
     </div>
   )
 }
