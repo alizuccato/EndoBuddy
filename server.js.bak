@@ -8,7 +8,7 @@
 
 import { createServer } from 'http'
 import { execSync } from 'child_process'
-import { randomUUID, scryptSync, timingSafeEqual } from 'crypto'
+import { randomUUID } from 'crypto'
 
 const PORT = 3001
 
@@ -36,29 +36,6 @@ function parseBody(req) {
   })
 }
 
-
-
-// Password hashing with scrypt (salt + hash)
-function hashPassword(password) {
-  const salt = randomUUID().slice(0, 16)
-  const hash = scryptSync(password, salt, 64).toString('hex')
-  return salt + ':' + hash
-}
-
-function verifyPassword(password, stored) {
-  const parts = stored.split(':')
-  const salt = parts[0]
-  const hash = parts[1]
-  const derived = scryptSync(password, salt, 64).toString('hex')
-  return timingSafeEqual(Buffer.from(derived), Buffer.from(hash))
-}
-
-// Generate a simple session token
-function generateToken() {
-  return randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '')
-}
-
-
 function json(res, data, status = 200) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -80,7 +57,7 @@ const router = {
     const body = await parseBody(req)
     const id = randomUUID()
     const now = new Date().toISOString()
-    teamDb(`INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at) VALUES ('${id}', '${body.displayName || ''}', ${body.dateOfBirth ? `'${body.dateOfBirth}'` : 'NULL'}, '${body.timezone || 'UTC'}', ${body.cycleLength || 28}, ${body.lastPeriodStart ? `'${body.lastPeriodStart}'` : 'NULL'}, '${body.role || 'patient'}', ${body.clinicName ? `'${body.clinicName}'` : 'NULL'}, ${body.specialty ? `'${body.specialty}'` : 'NULL'}, 1, '${now}', '${now}')`)
+    teamDb(`INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at) VALUES ('${id}', '${body.displayName || ''}', ${body.dateOfBirth ? `'${body.dateOfBirth}'` : 'NULL'}, '${body.timezone || 'UTC'}', ${body.cycleLength || 28}, ${body.lastPeriodStart ? `'${body.lastPeriodStart}'` : 'NULL'}, 1, '${now}', '${now}')`)
     json(res, { id, ...body }, 201)
   },
 
@@ -477,113 +454,6 @@ const router = {
     const now = new Date().toISOString()
     teamDb(`INSERT INTO feedback_logs (id, report_id, user_role, rating, comments, lesion_mappings, created_at) VALUES ('${id}', '${body.reportId || ''}', '${body.userRole || 'patient'}', ${body.rating}, ${body.comments ? `'${body.comments.replace(/'/g, "''")}'` : 'NULL'}, ${body.lesionMappings ? `'${body.lesionMappings.replace(/'/g, "''")}'` : 'NULL'}, '${now}')`)
     json(res, { id, submitted: true }, 201)
-  },
-
-
-  // ===== AUTHENTICATION =====
-  'POST /api/register': async (req, res) => {
-    const body = await parseBody(req)
-    const { email, password, displayName, role, clinicName, specialty } = body
-    
-    if (!email || !password) {
-      return json(res, { error: 'Email and password are required' }, 400)
-    }
-    if (password.length < 6) {
-      return json(res, { error: 'Password must be at least 6 characters' }, 400)
-    }
-    
-    const existing = teamDb(`SELECT id FROM users WHERE email = '${email.toLowerCase()}'`)
-    if (existing.length > 0) {
-      return json(res, { error: 'Email already registered' }, 409)
-    }
-    
-    const id = randomUUID()
-    const now = new Date().toISOString()
-    const passwordHash = hashPassword(password)
-    const userRole = role || 'patient'
-    
-    const escName = (displayName || '').replace(/'/g, "''")
-    const escClinic = clinicName ? `'${clinicName.replace(/'/g, "''")}'` : 'NULL'
-    const escSpecialty = specialty ? `'${specialty.replace(/'/g, "''")}'` : 'NULL'
-    
-    teamDb(`INSERT INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES ('${id}', '${escName}', '${email.toLowerCase()}', '${passwordHash}', '${userRole}', ${escClinic}, ${escSpecialty}, 0, '${now}', '${now}')`)
-    
-    const token = generateToken()
-    json(res, { id, email: email.toLowerCase(), displayName: displayName || '', role: userRole, token }, 201)
-  },
-
-  'POST /api/login': async (req, res) => {
-    const body = await parseBody(req)
-    const { email, password } = body
-    
-    if (!email || !password) {
-      return json(res, { error: 'Email and password are required' }, 400)
-    }
-    
-    const rows = teamDb(`SELECT id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete FROM users WHERE email = '${email.toLowerCase()}'`)
-    if (rows.length === 0) {
-      return json(res, { error: 'Invalid email or password' }, 401)
-    }
-    
-    const user = rows[0]
-    if (!verifyPassword(password, user.password_hash)) {
-      return json(res, { error: 'Invalid email or password' }, 401)
-    }
-    
-    const token = generateToken()
-    json(res, {
-      id: user.id,
-      email: user.email,
-      displayName: user.display_name,
-      role: user.role,
-      clinicName: user.clinic_name,
-      specialty: user.specialty,
-      onboardingComplete: user.onboarding_complete === 1,
-      token,
-    })
-  },
-
-  'GET /api/me/:userId': (req, res, params) => {
-    const rows = teamDb(`SELECT id, display_name, email, role, clinic_name, specialty, onboarding_complete, cycle_length_avg, last_period_start, created_at FROM users WHERE id = '${params.userId}'`)
-    if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
-    const u = rows[0]
-    json(res, {
-      id: u.id,
-      displayName: u.display_name,
-      email: u.email,
-      role: u.role,
-      clinicName: u.clinic_name,
-      specialty: u.specialty,
-      onboardingComplete: u.onboarding_complete === 1,
-      cycleLength: u.cycle_length_avg,
-      lastPeriodStart: u.last_period_start,
-    })
-  },
-
-  // ===== SEED TESTING ACCOUNTS =====
-  'POST /api/seed/auth': (req, res) => {
-    const now = new Date().toISOString()
-    const results = []
-    
-    // Seed patient account
-    const patientId = randomUUID()
-    const patientHash = hashPassword('test123')
-    teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${patientId}', 'Test Patient', 'patient@endobuddy.test', '${patientHash}', 'patient', 1, '${now}', '${now}')`)
-    results.push({ email: 'patient@endobuddy.test', password: 'test123', role: 'patient', id: patientId })
-    
-    // Seed clinician account
-    const clinicianId = randomUUID()
-    const clinicianHash = hashPassword('test123')
-    teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES ('${clinicianId}', 'Dr. Smith', 'clinician@endobuddy.test', '${clinicianHash}', 'clinician', 'Endo Care Center', 'Minimally Invasive Gynecology', 1, '${now}', '${now}')`)
-    results.push({ email: 'clinician@endobuddy.test', password: 'test123', role: 'clinician', id: clinicianId })
-    
-    // Seed admin account
-    const adminId = randomUUID()
-    const adminHash = hashPassword('admin123')
-    teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${adminId}', 'Admin', 'admin@endobuddy.test', '${adminHash}', 'admin', 1, '${now}', '${now}')`)
-    results.push({ email: 'admin@endobuddy.test', password: 'admin123', role: 'admin', id: adminId })
-    
-    json(res, { seeded: true, accounts: results })
   },
 
   'POST /api/seed/:userId': (req, res, params) => {

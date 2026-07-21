@@ -24,7 +24,7 @@ const SYMPTOM_OPTIONS = [
   { id: 'joint_pain', label: 'Joint / Muscle Pain', icon: '🦴', category: 'pain' },
 ]
 
-export default function OnboardingFlow({ onComplete, onSkip }) {
+export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onGoToDashboard }) {
   const [step, setStep] = useState(0)
   const [onboardingData, setOnboardingData] = useState({
     lastPeriodStart: null,
@@ -216,7 +216,14 @@ export default function OnboardingFlow({ onComplete, onSkip }) {
             </button>
           </div>
           <div className="text-center">
-            <button className="text-sm text-gray-400 hover:text-gray-600">
+            <button
+              onClick={() => {
+                const defaultDate = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0]
+                handleSelect('lastPeriodStart', defaultDate)
+                handleNext()
+              }}
+              className="text-sm text-gray-400 hover:text-gray-600"
+            >
               I'm not sure / I don't have regular periods
             </button>
           </div>
@@ -478,10 +485,10 @@ export default function OnboardingFlow({ onComplete, onSkip }) {
             </div>
 
             <div className="flex flex-col gap-3">
-              <button onClick={() => { handleComplete(); window.location.hash = '#log' }} className="btn-primary text-lg py-4">
+              <button onClick={() => { handleComplete(); if (onStartLogging) onStartLogging() }} className="btn-primary text-lg py-4">
                 Log How I Feel Right Now
               </button>
-              <button onClick={handleComplete} className="px-6 py-3 text-sm text-gray-600 hover:text-gray-800 font-medium">
+              <button onClick={() => { handleComplete(); if (onGoToDashboard) onGoToDashboard() }} className="px-6 py-3 text-sm text-gray-600 hover:text-gray-800 font-medium">
                 Take me to my Dashboard
               </button>
             </div>
