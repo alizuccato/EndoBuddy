@@ -832,7 +832,7 @@ const router = {
 
   // ===== SEED TESTING ACCOUNTS =====
   'POST /api/seed/auth': (req, res) => {
-    if (process.env.NODE_ENV === 'production') return json(res, { error: 'Seed endpoints are disabled in production' }, 403)
+    if (process.env.NODE_ENV === 'production') {
       return json(res, { error: 'Forbidden: Seeding is disabled in production' }, 403)
     }
     const now = new Date().toISOString()
@@ -863,7 +863,7 @@ const router = {
   },
 
   'POST /api/seed/:userId': (req, res, params) => {
-    if (process.env.NODE_ENV === 'production') return json(res, { error: 'Seed endpoints are disabled in production' }, 403)
+    if (process.env.NODE_ENV === 'production') {
       return json(res, { error: 'Forbidden: Seeding is disabled in production' }, 403)
     }
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
