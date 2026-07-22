@@ -5,6 +5,8 @@
  * All values are stored/retrieved via REST endpoints.
  */
 
+import { getLocalDateString } from '../utils/dateHelpers'
+
 const API_BASE = '/api'
 
 async function request(path, options = {}) {
@@ -66,7 +68,7 @@ export async function updateUser(userId, data) {
 
 export async function saveDailyLog(logData) {
   const userId = logData.userId || getUserId()
-  const today = new Date().toISOString().split('T')[0]
+  const today = getLocalDateString()
   
   return request('/logs', {
     method: 'POST',

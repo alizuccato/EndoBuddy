@@ -16,6 +16,7 @@ import PremiumUpgradeFlow from './components/PremiumUpgradeFlow'
 import LoginFlow from './components/LoginFlow'
 import { mockCycleData, mockInsights } from './utils/mockData'
 import { getUserId, getUser, getLogs, saveDailyLog, completeOnboarding } from './services/dbService'
+import { getLocalDateString } from './utils/dateHelpers'
 
 function App() {
   const [currentView, setCurrentView] = useState('home')
@@ -46,7 +47,7 @@ function App() {
         try {
           const logs = await getLogs(user.id)
           if (logs && logs.length > 0) {
-            const today = new Date().toISOString().split('T')[0]
+            const today = getLocalDateString()
             const formatted = logs.map(l => ({
               id: l.id, date: l.log_date, painLevel: l.pain_level,
               cycleDay: l.cycle_day, cyclePhase: l.cycle_phase,
@@ -88,7 +89,7 @@ function App() {
   const handleCloseLogging = useCallback(() => setShowLoggingFlow(false), [])
 
   const handleLogComplete = useCallback(async (logData) => {
-    const today = new Date().toISOString().split('T')[0]
+    const today = getLocalDateString()
     const entry = { ...logData, date: today, id: Date.now() }
     try { await saveDailyLog({ ...logData, userId }) } catch (e) { console.error('Failed to save log:', e) }
     setRecentLogs(prev => [entry, ...prev.slice(0, 6)]); setTodayLogged(true)

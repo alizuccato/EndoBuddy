@@ -16,6 +16,7 @@
 
 import { useState, useMemo, useCallback } from 'react'
 import { getPainColor, PHASE_STYLES, PHASE_ORDER } from '../utils/mockData'
+import { getLocalDateString } from '../utils/dateHelpers'
 
 export default function DoctorReport({ cycleData, insights, onBack }) {
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
@@ -161,8 +162,8 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
                     else if (label === '3 months') start.setMonth(start.getMonth() - 3)
                     else start.setMonth(start.getMonth() - 6)
                     setDateRange({
-                      start: start.toISOString().split('T')[0],
-                      end: end.toISOString().split('T')[0],
+                      start: getLocalDateString(start),
+                      end: getLocalDateString(end),
                     })
                   }}
                   className="px-3 py-1.5 text-xs font-medium rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"

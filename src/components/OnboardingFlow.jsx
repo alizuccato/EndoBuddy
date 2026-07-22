@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { PHASE_STYLES } from '../utils/mockData'
+import { getLocalDateString } from '../utils/dateHelpers'
 
 const SYMPTOM_OPTIONS = [
   { id: 'pelvic_pain', label: 'Pelvic Pain / Cramping', icon: '⚡', category: 'pain' },
@@ -94,7 +95,7 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
   for (let i = 0; i < 60; i++) {
     const d = new Date(now.getTime() - i * 86400000)
     dayOptions.push({
-      value: d.toISOString().split('T')[0],
+      value: getLocalDateString(d),
       label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     })
   }
@@ -218,7 +219,7 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
           <div className="text-center">
             <button
               onClick={() => {
-                const defaultDate = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0]
+                const defaultDate = getLocalDateString(new Date(Date.now() - 14 * 86400000))
                 handleSelect('lastPeriodStart', defaultDate)
                 handleNext()
               }}

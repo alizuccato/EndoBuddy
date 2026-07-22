@@ -13,6 +13,7 @@
 
 import { useState, useMemo } from 'react'
 import { getPainColor, PHASE_STYLES } from '../utils/mockData'
+import { getLocalDateString } from '../utils/dateHelpers'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_NAMES = [
@@ -56,8 +57,8 @@ export default function SymptomHeatmap({ cycleData }) {
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
       const dayData = days.find(day => day.date === dateStr)
-      const isToday = dateStr === today.toISOString().split('T')[0]
-      const isFuture = dateStr > today.toISOString().split('T')[0]
+      const isToday = dateStr === getLocalDateString(today)
+      const isFuture = dateStr > getLocalDateString(today)
       
       cells.push({
         day: d,

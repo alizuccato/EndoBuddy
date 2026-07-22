@@ -3,9 +3,11 @@
  * Provides realistic sample data for cycle tracking, symptoms, and AI insights
  */
 
+import { getLocalDateString } from './dateHelpers'
+
 const DAY_MS = 86400000
 const today = new Date()
-const todayStr = today.toISOString().split('T')[0]
+const todayStr = getLocalDateString(today)
 
 // Generate a realistic 30-day cycle starting 15 days ago
 function generateCycleDays() {
@@ -14,7 +16,7 @@ function generateCycleDays() {
   
   for (let i = 0; i < 30; i++) {
     const date = new Date(cycleStart.getTime() + i * DAY_MS)
-    const dateStr = date.toISOString().split('T')[0]
+    const dateStr = getLocalDateString(date)
     const dayNum = i + 1
     
     // Determine cycle phase

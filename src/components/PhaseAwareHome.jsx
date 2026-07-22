@@ -5,14 +5,14 @@
  * content based on the user's cycle phase. Now powered by the
  * Phase-Specific Wellness Library for dynamic content.
  *
- * Design: /home/team/shared/phase-aware-home-design.md
- * Content: /home/team/shared/phase-wellness-library.json
+ * Content: src/data/phase-wellness-library.json (bundled with the app so
+ * production builds don't depend on a file outside the repo)
  */
 
 import { useState, useMemo } from 'react'
 import EmpathyMessage from './EmpathyMessage'
 import { mockCycleData, PHASE_STYLES } from '../utils/mockData'
-import wellnessData from '/home/team/shared/phase-wellness-library.json'
+import wellnessData from '../data/phase-wellness-library.json'
 
 const PHASE_CONTENT = {
   menstrual: {

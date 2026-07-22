@@ -1,0 +1,309 @@
+{
+  "schema_version": "2.0",
+  "library_name": "Phase-Specific Wellness Library",
+  "description": "Comprehensive library of phase-specific wellness content for Premium Tier features. Includes detailed meal suggestions, lifestyle/movement tips, and endo-educational facts for each cycle phase.",
+  "intended_use": "Populate Premium Tier wellness features — Phase-Aware home screen, daily suggestions, and educational content cards.",
+  "phases": {
+    "menstrual": {
+      "name": "Menstrual Phase",
+      "days": "1-5",
+      "body_state": "Prostaglandins high. Inflammation elevated. Iron loss. Fatigue. Cramping.",
+      "core_focus": "Anti-inflammatory support, iron replenishment, warmth, comfort.",
+      "meals": [
+        {
+          "title": "Warm Turmeric Oatmeal",
+          "description": "Oatmeal cooked with cinnamon, topped with sliced banana, pumpkin seeds, and a drizzle of honey",
+          "prep_time": "10 min",
+          "tags": ["warm", "iron-rich", "magnesium-rich", "anti-inflammatory", "comforting"],
+          "why_it_helps": "Oats provide steady energy; cinnamon and turmeric are anti-inflammatory; pumpkin seeds provide iron and magnesium. The warmth soothes the body."
+        },
+        {
+          "title": "Red Lentil & Ginger Soup",
+          "description": "Red lentils simmered with ginger, turmeric, garlic, and spinach in bone or vegetable broth",
+          "prep_time": "30 min",
+          "tags": ["warm", "iron-rich", "anti-inflammatory", "easy-to-digest"],
+          "why_it_helps": "Lentils replenish iron lost during menstruation; ginger and turmeric reduce prostaglandin-driven inflammation; warm soup is easy to digest."
+        },
+        {
+          "title": "Grilled Salmon with Sweet Potato & Greens",
+          "description": "Wild salmon fillet with roasted sweet potatoes and saut\u00e9ed spinach or kale",
+          "prep_time": "25 min",
+          "tags": ["omega-3-rich", "iron-rich", "anti-inflammatory", "protein-rich"],
+          "why_it_helps": "Salmon provides omega-3 fatty acids that combat inflammation; sweet potatoes provide complex carbohydrates for sustained energy; leafy greens provide iron and magnesium."
+        },
+        {
+          "title": "Magnesium-Rich Smoothie Bowl",
+          "description": "Blended banana, spinach, almond milk, cacao powder, topped with almonds, chia seeds, and dark chocolate shavings",
+          "prep_time": "5 min",
+          "tags": ["magnesium-rich", "quick", "anti-inflammatory", "mood-support"],
+          "why_it_helps": "Bananas, spinach, cacao, and almonds are all rich in magnesium, which helps relax muscles and reduce cramping."
+        },
+        {
+          "title": "Bone Broth with Soft Tofu & Greens",
+          "description": "Warm bone broth with silken tofu, bok choy, ginger, and a splash of coconut aminos",
+          "prep_time": "10 min",
+          "tags": ["warm", "easy-to-digest", "protein-rich", "comforting"],
+          "why_it_helps": "Bone broth is hydrating and mineral-rich; soft tofu provides easy-to-digest protein; ginger settles the stomach."
+        }
+      ],
+      "lifestyle_tips": [
+        {
+          "title": "Restorative Yoga for Cramp Relief",
+          "description": "Supported child's pose with pillow under belly, legs-up-the-wall, and savasana with a weighted blanket on the lower abdomen",
+          "duration": "15-20 min",
+          "why_it_helps": "Lowers cortisol, releases pelvic tension, and the weighted blanket provides deep pressure stimulation that calms the nervous system."
+        },
+        {
+          "title": "Heat Therapy Ritual",
+          "description": "Apply a heating pad or warm water bottle to your lower abdomen and lower back. Combine with slow, deep belly breathing (4 sec in, 6 sec out).",
+          "duration": "20-30 min",
+          "why_it_helps": "Heat increases blood flow to the pelvic area, relaxes uterine muscles, and reduces cramping intensity. Combined with breathwork, it activates the parasympathetic nervous system."
+        },
+        {
+          "title": "Gentle Walking in Nature",
+          "description": "A very slow, mindful 10-15 minute walk outdoors. Focus on the sensation of fresh air and natural surroundings.",
+          "duration": "10-15 min",
+          "why_it_helps": "Maintains gentle circulation without strain; outdoor exposure supports mood regulation; slow pace honors your body's need for rest."
+        }
+      ],
+      "endo_facts": [
+        {
+          "fact": "During menstruation, the uterine lining sheds — but for people with endometriosis, similar tissue also bleeds outside the uterus. This internal bleeding triggers inflammation and pain that over-the-counter painkillers often can't touch.",
+          "empowering_message": "Your pain has a physical cause. It's not 'in your head,' and it's not 'just a bad period.' Your body is responding to real inflammation."
+        },
+        {
+          "fact": "Prostaglandins — the chemicals that cause uterine contractions — are significantly elevated in people with endometriosis. This is why endo period cramps are often described as 10x worse than typical menstrual cramps.",
+          "empowering_message": "This explains why ibuprofen alone isn't enough. Anti-inflammatory foods (ginger, turmeric, omega-3s) work alongside medications to reduce prostaglandin production."
+        }
+      ]
+    },
+    "follicular": {
+      "name": "Follicular Phase",
+      "days": "6-14",
+      "body_state": "Estrogen rising. Energy returning. Inflammation low. Pain typically lowest of the cycle.",
+      "core_focus": "Estrogen metabolism support, gut health, rebuilding energy, liver detox support.",
+      "meals": [
+        {
+          "title": "Green Detox Smoothie",
+          "description": "Spinach, frozen berries, flaxseeds, plant-based protein, and unsweetened almond milk blended until smooth",
+          "prep_time": "5 min",
+          "tags": ["fiber-rich", "antioxidant", "liver-support", "energizing"],
+          "why_it_helps": "Spinach and berries provide antioxidants that support liver detox; flaxseeds provide lignans that help bind excess estrogen for elimination."
+        },
+        {
+          "title": "Cruciferous Power Bowl",
+          "description": "Roasted broccoli, cauliflower, and Brussels sprouts over quinoa, with chickpeas, lemon-tahini dressing, and pumpkin seeds",
+          "prep_time": "30 min",
+          "tags": ["cruciferous", "fiber-rich", "liver-support", "plant-protein"],
+          "why_it_helps": "Cruciferous vegetables contain sulforaphane, which supports the liver's ability to process and eliminate excess estrogen \u2014 a key function in this phase."
+        },
+        {
+          "title": "Citrus & Herb Grilled Chicken",
+          "description": "Grilled chicken breast marinated in lemon juice, garlic, oregano, and olive oil, served with roasted asparagus and wild rice",
+          "prep_time": "30 min",
+          "tags": ["protein-rich", "vitamin-c-rich", "anti-inflammatory", "light"],
+          "why_it_helps": "Vitamin C from citrus supports collagen production for tissue health and acts as an antioxidant; lean protein rebuilds energy stores."
+        },
+        {
+          "title": "Fermented Veggie & Avocado Toast",
+          "description": "Sourdough or gluten-free toast topped with mashed avocado, sauerkraut or kimchi, and a poached egg",
+          "prep_time": "10 min",
+          "tags": ["gut-health", "fermented", "probiotic", "quick"],
+          "why_it_helps": "Fermented foods (sauerkraut, kimchi) feed the gut microbiome, which plays a key role in estrogen metabolism and clearance."
+        },
+        {
+          "title": "Warm Quinoa & Roasted Veggie Bowl",
+          "description": "Quinoa topped with roasted beets, carrots, red onion, and a lemon-herb vinaigrette",
+          "prep_time": "30 min",
+          "tags": ["fiber-rich", "liver-support", "anti-inflammatory", "energizing"],
+          "why_it_helps": "Beets support liver detoxification pathways; quinoa provides complete protein; lemon supports bile production for estrogen clearance."
+        }
+      ],
+      "lifestyle_tips": [
+        {
+          "title": "Strength Training (Moderate)",
+          "description": "Moderate weightlifting (2-3 sets, 8-12 reps) or bodyweight exercises like squats, lunges, and pushups",
+          "duration": "20-30 min",
+          "why_it_helps": "Estrogen supports muscle recovery in this phase, making it the best time in your cycle for building strength. Improved muscle tone also supports pelvic stability."
+        },
+        {
+          "title": "Energizing Morning Walk + Sunlight",
+          "description": "A brisk 20-minute walk outdoors within 30 minutes of waking, exposing face and arms to morning sunlight",
+          "duration": "20 min",
+          "why_it_helps": "Morning sunlight resets your circadian rhythm and supports estrogen metabolism. Combined with movement, it builds energy for the day ahead."
+        },
+        {
+          "title": "Gut-Nourishing Ritual",
+          "description": "Start your day with a glass of warm water with lemon, followed by a probiotic-rich food (sauerkraut, kimchi, or kefir if tolerated)",
+          "duration": "5 min",
+          "why_it_helps": "Lemon water supports digestion and liver function; probiotics feed the gut microbiome that helps eliminate excess estrogen."
+        }
+      ],
+      "endo_facts": [
+        {
+          "fact": "The liver is responsible for metabolizing and clearing excess estrogen from the body. Supporting liver function — through cruciferous vegetables, fiber, and hydration — can help reduce estrogen-driven inflammation.",
+          "empowering_message": "Your follicular phase is the perfect time to support your liver. Every bite of broccoli or Brussels sprouts is helping your body process hormones more efficiently."
+        },
+        {
+          "fact": "Endometriosis is considered an estrogen-dependent condition. This means estrogen can fuel lesion growth. Supporting healthy estrogen metabolism is a key part of managing endo symptoms.",
+          "empowering_message": "This phase is your body's natural window for estrogen clearance. By eating fiber-rich and cruciferous foods now, you're actively supporting your body's hormone balance."
+        }
+      ]
+    },
+    "ovulatory": {
+      "name": "Ovulatory Phase",
+      "days": "14-17",
+      "body_state": "Estrogen peaks then drops. Testosterone briefly rises. Energy is high but some endo patients experience ovulation pain.",
+      "core_focus": "Fiber, antioxidants, gentle anti-inflammatory support, honoring variable energy levels.",
+      "meals": [
+        {
+          "title": "Antioxidant Berry & Seed Bowl",
+          "description": "Greek-style coconut yogurt (or plant-based) topped with blueberries, raspberries, blackberries, chia seeds, and walnuts",
+          "prep_time": "5 min",
+          "tags": ["antioxidant-rich", "fiber-rich", "quick", "omega-3-rich"],
+          "why_it_helps": "Berries are packed with antioxidants that combat the oxidative stress from the hormonal surge of ovulation."
+        },
+        {
+          "title": "Roasted Beet & Chickpea Buddha Bowl",
+          "description": "Quinoa, roasted beets, roasted chickpeas, avocado, mixed greens, and tahini dressing",
+          "prep_time": "35 min",
+          "tags": ["fiber-rich", "liver-support", "antioxidant", "healthy-fat"],
+          "why_it_helps": "Beets support liver function during the estrogen peak; chickpeas provide fiber for hormone clearance; avocado provides anti-inflammatory fats."
+        },
+        {
+          "title": "Turmeric Tempeh Stir-Fry",
+          "description": "Tempeh stir-fried with broccoli, bell peppers, snap peas, ginger, garlic, and turmeric, served with brown rice",
+          "prep_time": "20 min",
+          "tags": ["plant-protein", "anti-inflammatory", "fiber-rich", "gut-health"],
+          "why_it_helps": "Tempeh is fermented, supporting gut health; turmeric and ginger provide anti-inflammatory support; broccoli contains sulforaphane for liver detox."
+        },
+        {
+          "title": "Zesty Shrimp & Avocado Salad",
+          "description": "Mixed greens with grilled shrimp, avocado, cherry tomatoes, cucumber, and a lime-cilantro vinaigrette",
+          "prep_time": "15 min",
+          "tags": ["light", "protein-rich", "anti-inflammatory", "zinc-rich"],
+          "why_it_helps": "Shrimp provides zinc, which supports ovulation health; avocado and lime provide anti-inflammatory fats and vitamin C."
+        },
+        {
+          "title": "Zinc-Rich Pumpkin Seed Pesto Pasta",
+          "description": "Whole grain or gluten-free pasta tossed with pesto made from pumpkin seeds, basil, garlic, and olive oil",
+          "prep_time": "15 min",
+          "tags": ["zinc-rich", "quick", "anti-inflammatory", "fiber-rich"],
+          "why_it_helps": "Pumpkin seeds are one of the best plant sources of zinc, which supports immune function and ovulation health."
+        }
+      ],
+      "lifestyle_tips": [
+        {
+          "title": "Moderate Cardio (Listen to Your Body)",
+          "description": "Brisk walking, cycling, swimming, or light jogging for 20-30 minutes. If ovulation pain is present, swim or walk gently.",
+          "duration": "20-30 min",
+          "why_it_helps": "Energy is often high in this phase, making movement feel good. However, if ovulation causes cramping, choose lower-impact options like swimming."
+        },
+        {
+          "title": "Hip-Opening Yoga Flow",
+          "description": "Gentle sun salutations, lizard pose, pigeon pose (supported), and hip circles. Hold each pose for 3-5 breaths.",
+          "duration": "15-20 min",
+          "why_it_helps": "Ovulation involves the release of an egg from the ovary; hip-opening poses create space in the pelvis and can ease ovulation discomfort."
+        },
+        {
+          "title": "Hydration Focus",
+          "description": "Drink 6-8 glasses of water plus herbal teas (nettle, raspberry leaf, or peppermint). Add a pinch of sea salt to water for electrolytes.",
+          "duration": "Throughout the day",
+          "why_it_helps": "Estrogen peak can cause fluid retention; staying hydrated helps flush the system and reduces bloating. Electrolytes support cellular function during hormonal shifts."
+        }
+      ],
+      "endo_facts": [
+        {
+          "fact": "For some people with endometriosis, ovulation itself can be painful. The release of an egg triggers an inflammatory response in the pelvis, and if endometrial tissue is present on the ovaries, this can cause sharp, one-sided pain.",
+          "empowering_message": "If ovulation hurts, that's a valuable piece of information for your doctor. Tracking ovulation pain alongside cycle phase helps differentiate ovarian involvement from other endo locations."
+        },
+        {
+          "fact": "Fiber plays a crucial role in estrogen elimination. The body excretes estrogen through the bile into the intestines, and fiber binds to it so it can be eliminated rather than reabsorbed.",
+          "empowering_message": "Every fiber-rich meal during ovulation is helping your body clear the estrogen surge. It's not just 'eating healthy' \u2014 it's active hormone management."
+        }
+      ]
+    },
+    "luteal": {
+      "name": "Luteal Phase",
+      "days": "18-28",
+      "body_state": "Progesterone rises. Inflammation increases. Bloating, mood shifts, breast tenderness, cravings, and fatigue common.",
+      "core_focus": "Blood sugar stabilization, magnesium support, mood regulation, gentle movement, sleep optimization.",
+      "meals": [
+        {
+          "title": "Sweet Potato & Spinach Breakfast Hash",
+          "description": "Diced sweet potatoes saut\u00e9ed with spinach, onions, and bell peppers, topped with a poached egg or tofu scramble",
+          "prep_time": "20 min",
+          "tags": ["complex-carbs", "magnesium-rich", "blood-sugar-stable", "warm"],
+          "why_it_helps": "Sweet potatoes stabilize blood sugar, preventing energy crashes and mood swings. Spinach provides magnesium for muscle relaxation and mood support."
+        },
+        {
+          "title": "Dark Chocolate & Cherry Overnight Oats",
+          "description": "Oats soaked in almond milk with cacao powder, tart cherries, chia seeds, and a dollop of almond butter",
+          "prep_time": "5 min prep (overnight)",
+          "tags": ["magnesium-rich", "mood-support", "antioxidant", "blood-sugar-stable"],
+          "why_it_helps": "Dark chocolate provides magnesium and antioxidants; tart cherries contain natural melatonin for sleep support; oats stabilize blood sugar."
+        },
+        {
+          "title": "Warm Salmon & Roasted Vegetable Plate",
+          "description": "Wild salmon with roasted sweet potatoes, Brussels sprouts, and a side of steamed kale with lemon",
+          "prep_time": "30 min",
+          "tags": ["omega-3-rich", "anti-inflammatory", "magnesium-rich", "blood-sugar-stable"],
+          "why_it_helps": "Salmon's omega-3s counteract progesterone-driven inflammation; roasted vegetables provide complex carbs and magnesium; fiber supports digestion during a phase when GI symptoms are common."
+        },
+        {
+          "title": "Magnesium-Boosted Buddha Bowl",
+          "description": "Quinoa bowl with roasted sweet potato, black beans, avocado, pumpkin seeds, and a lime-cilantro dressing",
+          "prep_time": "25 min",
+          "tags": ["magnesium-rich", "fiber-rich", "mood-support", "blood-sugar-stable"],
+          "why_it_helps": "Pumpkin seeds, black beans, and avocado are all magnesium-rich, supporting mood and reducing bloating. Complex carbs from quinoa and sweet potato stabilize mood."
+        },
+        {
+          "title": "Chamomile & Walnut Snack Plate",
+          "description": "A small plate with 2-3 walnuts, a square of dark chocolate, a few dried tart cherries, and a cup of chamomile tea",
+          "prep_time": "2 min",
+          "tags": ["mood-support", "sleep-support", "magnesium-rich", "quick"],
+          "why_it_helps": "Walnuts provide omega-3s; dark chocolate provides magnesium; tart cherries support melatonin; chamomile calms the nervous system before bed."
+        }
+      ],
+      "lifestyle_tips": [
+        {
+          "title": "Gentle Yin Yoga or Restorative Stretching",
+          "description": "Held floor poses: butterfly pose, child's pose, legs-up-the-wall, and a gentle spinal twist. Hold each for 2-3 minutes.",
+          "duration": "20-30 min",
+          "why_it_helps": "Yin yoga targets connective tissues and releases tension held during PMS. The longer holds calm the nervous system and lower cortisol."
+        },
+        {
+          "title": "Evening Wind-Down Protocol",
+          "description": "Dim lights at 8PM, no screens after 9PM, a warm cup of chamomile or lavender tea, and 5 minutes of journaling or gentle breathing before bed",
+          "duration": "1-2 hours before bed",
+          "why_it_helps": "Progesterone raises core body temperature and can disrupt sleep. A gradual wind-down signals the body to produce melatonin and counteracts the luteal phase insomnia many endo patients experience."
+        },
+        {
+          "title": "Comfort-First Movement: Walking or Swimming",
+          "description": "A gentle 20-minute walk at a comfortable pace, or gentle swimming in warm water. Stop if you feel any increase in pelvic pressure.",
+          "duration": "20 min",
+          "why_it_helps": "Progesterone increases ligament laxity, making joints more prone to injury. Low-impact movement maintains circulation without strain and supports mood through endorphin release."
+        }
+      ],
+      "endo_facts": [
+        {
+          "fact": "Progesterone, which dominates the luteal phase, has a natural anti-inflammatory effect \u2014 but in endometriosis, the body may be progesterone-resistant. This means the inflammation-blocking effects of progesterone don't work as well, leading to increased pain and symptoms in this phase.",
+          "empowering_message": "If your symptoms flare in the week before your period, it's not your imagination. Progesterone resistance in endo is a real physiological phenomenon, and knowing this helps you and your doctor target treatments more effectively."
+        },
+        {
+          "fact": "Magnesium levels naturally fluctuate throughout the menstrual cycle and are often lowest in the luteal phase. Low magnesium is linked to worsened PMS symptoms, including cramps, mood swings, fatigue, and sleep disruption.",
+          "empowering_message": "This is why magnesium-rich foods (dark chocolate, spinach, pumpkin seeds, bananas) feel so good in this phase. Your body genuinely needs more right now, and meeting that need can significantly ease your symptoms."
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "schema_version": "2.0",
+    "generated_from": ["meal-suggestions.md", "phase-wellness-tips.md", "nervous-system-tips.md", "phase-content.json"],
+    "total_meals": 20,
+    "total_lifestyle_tips": 12,
+    "total_endo_facts": 8,
+    "language_tone": "Patient-first, empathetic, research-backed, empowering. See endo-language.md for full tone guide.",
+    "disclaimer": "These suggestions are informational and not medical advice. Consult your healthcare provider before making dietary or lifestyle changes."
+  }
+}
