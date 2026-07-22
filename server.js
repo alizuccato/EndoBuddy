@@ -146,9 +146,22 @@ function getAuthenticatedUserId(req) {
   if (!token || token.length < 10) return null
   
   try {
-    const rows = teamDb(`SELECT user_id FROM sessions WHERE token = ${escapeStr(token)}`)
+    const rows = teamDb(`SELECT user_id, created_at FROM sessions WHERE token = ${escapeStr(token)}`)
     if (rows.length === 0) return null
-    return rows[0].user_id
+    const session = rows[0]
+    if (session.created_at) {
+      const createdAt = new Date(session.created_at)
+      const expiry = 24 * 60 * 60 * 1000 // 24-hour TTL expiry
+      if (Date.now() - createdAt.getTime() > expiry) {
+        try {
+          teamDb(`DELETE FROM sessions WHERE token = ${escapeStr(token)}`)
+        } catch (e) {
+          console.error("Failed to delete expired session:", e.message)
+        }
+        return null
+      }
+    }
+    return session.user_id
   } catch (e) {
     return null
   }
@@ -745,7 +758,7 @@ const router = {
     const id = randomUUID()
     const now = new Date().toISOString()
     const passwordHash = hashPassword(password)
-    const userRole = ['patient', 'clinician', 'admin'].includes(role) ? role : 'patient'
+    const userRole = ['patient', 'clinician'].includes(role) ? role : 'patient'
     
     const safeName = escapeStr(displayName || '')
     const safeClinic = clinicName ? escapeStr(clinicName) : 'NULL'
@@ -819,6 +832,9 @@ const router = {
 
   // ===== SEED TESTING ACCOUNTS =====
   'POST /api/seed/auth': (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+      return json(res, { error: 'Forbidden: Seeding is disabled in production' }, 403)
+    }
     const now = new Date().toISOString()
     const results = []
     
@@ -847,6 +863,9 @@ const router = {
   },
 
   'POST /api/seed/:userId': (req, res, params) => {
+    if (process.env.NODE_ENV === 'production') {
+      return json(res, { error: 'Forbidden: Seeding is disabled in production' }, 403)
+    }
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
     const userId = params.userId
     
