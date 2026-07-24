@@ -12,6 +12,7 @@
     "api": "node server.js"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "uuid": "^14.0.0"
