@@ -2,25 +2,35 @@
  * EndoBuddy API Server
  * 
  * Lightweight HTTP server bridging the React frontend to the Turso database.
- * Uses `team-db` CLI for all database operations.
+ * Uses @libsql/client to talk to Turso directly (no external CLI dependency).
  * Runs on port 3001, proxied by Vite on port 5173.
  */
 
 import { createServer } from 'http'
-import { execSync } from 'child_process'
+import { createClient } from '@libsql/client'
 import { randomUUID, scryptSync, timingSafeEqual } from 'crypto'
 
-const PORT = 3001
+const PORT = process.env.PORT || 3001
 
-function teamDb(sql) {
+// ===== DATABASE CLIENT =====
+// Requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN to be set as environment
+// variables (e.g. in Render's Environment tab, or a local .env for dev).
+if (!process.env.TURSO_DATABASE_URL) {
+  console.error('FATAL: TURSO_DATABASE_URL environment variable is not set.')
+}
+
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN,
+})
+
+async function teamDb(sql) {
   try {
-    // Escape quotes properly for shell
-    const escaped = sql.replace(/'/g, "'\\''")
-    const result = execSync(`team-db '${escaped}'`, { encoding: 'utf-8', timeout: 10000 })
-    return JSON.parse(result.trim())
+    const result = await db.execute(sql)
+    return result.rows
   } catch (err) {
-    console.error('DB Error:', err.stderr?.toString() || err.message)
-    throw new Error(err.stderr?.toString() || err.message)
+    console.error('DB Error:', err.message)
+    throw new Error(err.message)
   }
 }
 
@@ -38,7 +48,7 @@ function parseBody(req) {
 
 // Ensure session table exists at startup
 try {
-  teamDb("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT)")
+  await teamDb("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT)")
 } catch (e) {
   console.error("Failed to create sessions table:", e.message)
 }
@@ -137,7 +147,7 @@ function checkRateLimit(req, res, isStrict = false) {
 }
 
 // ===== AUTHENTICATION & AUTHORIZATION MIDDLEWARE =====
-function getAuthenticatedUserId(req) {
+async function getAuthenticatedUserId(req) {
   const authHeader = req.headers.authorization
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null
@@ -146,7 +156,7 @@ function getAuthenticatedUserId(req) {
   if (!token || token.length < 10) return null
   
   try {
-    const rows = teamDb(`SELECT user_id, created_at FROM sessions WHERE token = ${escapeStr(token)}`)
+    const rows = await teamDb(`SELECT user_id, created_at FROM sessions WHERE token = ${escapeStr(token)}`)
     if (rows.length === 0) return null
     const session = rows[0]
     if (session.created_at) {
@@ -154,7 +164,7 @@ function getAuthenticatedUserId(req) {
       const expiry = 24 * 60 * 60 * 1000 // 24-hour TTL expiry
       if (Date.now() - createdAt.getTime() > expiry) {
         try {
-          teamDb(`DELETE FROM sessions WHERE token = ${escapeStr(token)}`)
+          await teamDb(`DELETE FROM sessions WHERE token = ${escapeStr(token)}`)
         } catch (e) {
           console.error("Failed to delete expired session:", e.message)
         }
@@ -167,9 +177,9 @@ function getAuthenticatedUserId(req) {
   }
 }
 
-function verifyUserAuth(req, res, targetUserId) {
+async function verifyUserAuth(req, res, targetUserId) {
   try {
-    const userRows = teamDb(`SELECT email FROM users WHERE id = ${escapeStr(targetUserId)}`)
+    const userRows = await teamDb(`SELECT email FROM users WHERE id = ${escapeStr(targetUserId)}`)
     if (userRows.length === 0) {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'User not found' }))
@@ -180,7 +190,7 @@ function verifyUserAuth(req, res, targetUserId) {
     
     // If the user has a registered email, they MUST be authenticated via session token matching targetUserId
     if (user.email) {
-      const authUserId = getAuthenticatedUserId(req)
+      const authUserId = await getAuthenticatedUserId(req)
       if (!authUserId) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Authentication token required (Bearer)' }))
@@ -207,7 +217,7 @@ function json(res, data, status = 200) {
   res.end(JSON.stringify(data))
 }
 
-try { teamDb(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT)`) } catch (e) {}
+try { await teamDb(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT)`) } catch (e) {}
 
 const router = {
   // Health check
@@ -231,22 +241,22 @@ const router = {
     const safeClinic = escapeStr(body.clinicName || '')
     const safeSpecialty = escapeStr(body.specialty || '')
     
-    teamDb(`INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty) VALUES (${escapeStr(id)}, ${safeName}, ${safeDob}, ${safeTz}, ${safeCycle}, ${safeLps}, 1, ${escapeStr(now)}, ${escapeStr(now)}, ${safeRole}, ${safeClinic}, ${safeSpecialty})`)
+    await teamDb(`INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty) VALUES (${escapeStr(id)}, ${safeName}, ${safeDob}, ${safeTz}, ${safeCycle}, ${safeLps}, 1, ${escapeStr(now)}, ${escapeStr(now)}, ${safeRole}, ${safeClinic}, ${safeSpecialty})`)
     json(res, { id, ...body }, 201)
   },
 
-  'GET /api/users/:id': (req, res, params) => {
+  'GET /api/users/:id': async (req, res, params) => {
     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.id)) return
+    if (!(await verifyUserAuth(req, res, params.id))) return
     
-    const rows = teamDb(`SELECT * FROM users WHERE id = ${escapeStr(params.id)}`)
+    const rows = await teamDb(`SELECT * FROM users WHERE id = ${escapeStr(params.id)}`)
     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
     json(res, rows[0])
   },
 
   'PUT /api/users/:id': async (req, res, params) => {
     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.id)) return
+    if (!(await verifyUserAuth(req, res, params.id))) return
     
     const body = await parseBody(req)
     const now = new Date().toISOString()
@@ -282,7 +292,7 @@ const router = {
     }
     
     if (updates.length === 0) return json(res, { error: 'No valid fields to update' }, 400)
-    teamDb(`UPDATE users SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
+    await teamDb(`UPDATE users SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
     json(res, { id: params.id, updated: true })
   },
 
@@ -290,7 +300,7 @@ const router = {
   'POST /api/logs': async (req, res) => {
     const body = await parseBody(req)
     if (!isValidUUID(body.userId)) return json(res, { error: 'Invalid or missing user ID' }, 400)
-    if (!verifyUserAuth(req, res, body.userId)) return
+    if (!(await verifyUserAuth(req, res, body.userId))) return
     
     if (!isValidDate(body.logDate)) return json(res, { error: 'Invalid or missing log date' }, 400)
     
@@ -306,7 +316,7 @@ const router = {
     const overallWellness = (isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : 'NULL'
     const notes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
     
-    teamDb(`INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${escapeStr(body.logDate)}, ${cycleDay}, ${cyclePhase}, ${isPeriodDay}, ${flowLevel}, ${painLevel}, ${overallWellness}, ${notes}, ${escapeStr(now)}, ${escapeStr(now)})`)
+    await teamDb(`INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${escapeStr(body.logDate)}, ${cycleDay}, ${cyclePhase}, ${isPeriodDay}, ${flowLevel}, ${painLevel}, ${overallWellness}, ${notes}, ${escapeStr(now)}, ${escapeStr(now)})`)
     
     // Save symptoms
     if (body.symptoms && Array.isArray(body.symptoms) && body.symptoms.length > 0) {
@@ -317,43 +327,43 @@ const router = {
         const safeSymIcon = escapeStr(symptom.icon || '')
         const safeSeverity = (isValidNumber(symptom.severity) && symptom.severity >= 1 && symptom.severity <= 10) ? Number(symptom.severity) : 5
         
-        teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(id)}, ${safeSymName}, ${safeSymIcon}, ${safeSeverity}, ${escapeStr(now)})`)
+        await teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(id)}, ${safeSymName}, ${safeSymIcon}, ${safeSeverity}, ${escapeStr(now)})`)
       }
     }
     
     json(res, { id, ...body }, 201)
   },
 
-  'GET /api/logs/:userId': (req, res, params) => {
+  'GET /api/logs/:userId': async (req, res, params) => {
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.userId)) return
+    if (!(await verifyUserAuth(req, res, params.userId))) return
     
-    const rows = teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} ORDER BY log_date DESC LIMIT 90`)
+    const rows = await teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} ORDER BY log_date DESC LIMIT 90`)
     json(res, rows)
   },
 
-  'GET /api/logs/:userId/:date': (req, res, params) => {
+  'GET /api/logs/:userId/:date': async (req, res, params) => {
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.userId)) return
+    if (!(await verifyUserAuth(req, res, params.userId))) return
     if (!isValidDate(params.date)) return json(res, { error: 'Invalid date format (must be YYYY-MM-DD)' }, 400)
     
-    const rows = teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} AND log_date = ${escapeStr(params.date)}`)
+    const rows = await teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} AND log_date = ${escapeStr(params.date)}`)
     if (rows.length === 0) return json(res, null)
     const log = rows[0]
-    const symptoms = teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(log.id)}`)
+    const symptoms = await teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(log.id)}`)
     json(res, { ...log, symptoms })
   },
 
   // ===== SYMPTOMS FOR A LOG =====
-  'GET /api/symptoms/:logId': (req, res, params) => {
+  'GET /api/symptoms/:logId': async (req, res, params) => {
     if (!isValidUUID(params.logId)) return json(res, { error: 'Invalid log ID format' }, 400)
     
     // Resolve log first to check authorization
-    const logRows = teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.logId)}`)
+    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.logId)}`)
     if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
-    if (!verifyUserAuth(req, res, logRows[0].user_id)) return
+    if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
     
-    const rows = teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.logId)} ORDER BY severity DESC`)
+    const rows = await teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.logId)} ORDER BY severity DESC`)
     json(res, rows)
   },
 
@@ -361,7 +371,7 @@ const router = {
   'POST /api/cycles': async (req, res) => {
     const body = await parseBody(req)
     if (!isValidUUID(body.userId)) return json(res, { error: 'Invalid or missing user ID' }, 400)
-    if (!verifyUserAuth(req, res, body.userId)) return
+    if (!(await verifyUserAuth(req, res, body.userId))) return
     
     if (!isValidDate(body.periodStart)) return json(res, { error: 'Invalid or missing period start date' }, 400)
     
@@ -371,25 +381,25 @@ const router = {
     const safeEnd = isValidDate(body.periodEnd) ? escapeStr(body.periodEnd) : 'NULL'
     const safeNotes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
     
-    teamDb(`INSERT INTO cycles (id, user_id, period_start, period_end, notes, created_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${safeStart}, ${safeEnd}, ${safeNotes}, ${escapeStr(now)})`)
+    await teamDb(`INSERT INTO cycles (id, user_id, period_start, period_end, notes, created_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${safeStart}, ${safeEnd}, ${safeNotes}, ${escapeStr(now)})`)
     json(res, { id, ...body }, 201)
   },
 
-  'GET /api/cycles/:userId': (req, res, params) => {
+  'GET /api/cycles/:userId': async (req, res, params) => {
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.userId)) return
+    if (!(await verifyUserAuth(req, res, params.userId))) return
     
-    const rows = teamDb(`SELECT * FROM cycles WHERE user_id = ${escapeStr(params.userId)} ORDER BY period_start DESC`)
+    const rows = await teamDb(`SELECT * FROM cycles WHERE user_id = ${escapeStr(params.userId)} ORDER BY period_start DESC`)
     json(res, rows)
   },
 
   // ===== INSIGHTS =====
-  'GET /api/insights/:userId': (req, res, params) => {
+  'GET /api/insights/:userId': async (req, res, params) => {
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.userId)) return
+    if (!(await verifyUserAuth(req, res, params.userId))) return
     
     // Calculate pain-by-phase from logged data
-    const logRows = teamDb(`SELECT dl.cycle_phase, dl.pain_level, dl.log_date FROM daily_logs dl WHERE dl.user_id = ${escapeStr(params.userId)} AND dl.pain_level IS NOT NULL ORDER BY dl.log_date`)
+    const logRows = await teamDb(`SELECT dl.cycle_phase, dl.pain_level, dl.log_date FROM daily_logs dl WHERE dl.user_id = ${escapeStr(params.userId)} AND dl.pain_level IS NOT NULL ORDER BY dl.log_date`)
     
     if (logRows.length === 0) {
       return json(res, { painByPhase: {}, avgPain: null, totalLogs: 0 })
@@ -418,15 +428,15 @@ const router = {
   },
 
   // ===== AI PATTERN RECOGNITION =====
-  'GET /api/patterns/:userId': (req, res, params) => {
+  'GET /api/patterns/:userId': async (req, res, params) => {
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.userId)) return
+    if (!(await verifyUserAuth(req, res, params.userId))) return
     
     const userId = params.userId
     const patterns = []
 
     // 1. Fetch all logs with symptoms
-    const logRows = teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day 
+    const logRows = await teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day 
       FROM daily_logs dl WHERE dl.user_id = ${escapeStr(userId)} AND dl.pain_level IS NOT NULL 
       ORDER BY dl.log_date ASC`)
     
@@ -442,7 +452,7 @@ const router = {
 
     // Fetch all symptoms
     const logIds = logRows.map(r => `'${r.id}'`).join(',')
-    const symptomRows = teamDb(`SELECT se.daily_log_id, se.symptom_name, se.severity, se.symptom_icon 
+    const symptomRows = await teamDb(`SELECT se.daily_log_id, se.symptom_name, se.severity, se.symptom_icon 
       FROM symptom_entries se WHERE se.daily_log_id IN (${logIds})`)
 
     // Group symptoms by log
@@ -707,12 +717,12 @@ const router = {
     const safeRating = Number(body.rating)
     const safeComment = body.comment ? escapeStr(String(body.comment)) : 'NULL'
     
-    teamDb(`INSERT INTO clinical_feedback (id, user_id, feedback_type, target_id, target_label, rating, comment, created_at) VALUES (${escapeStr(id)}, ${safeUserId}, ${safeType}, ${safeTargetId}, ${safeTargetLabel}, ${safeRating}, ${safeComment}, ${escapeStr(now)})`)
+    await teamDb(`INSERT INTO clinical_feedback (id, user_id, feedback_type, target_id, target_label, rating, comment, created_at) VALUES (${escapeStr(id)}, ${safeUserId}, ${safeType}, ${safeTargetId}, ${safeTargetLabel}, ${safeRating}, ${safeComment}, ${escapeStr(now)})`)
     json(res, { id, submitted: true }, 201)
   },
 
-  'GET /api/feedback/stats': (req, res) => {
-    const rows = teamDb(`SELECT feedback_type, AVG(rating) as avg_rating, COUNT(*) as count FROM clinical_feedback GROUP BY feedback_type ORDER BY count DESC`)
+  'GET /api/feedback/stats': async (req, res) => {
+    const rows = await teamDb(`SELECT feedback_type, AVG(rating) as avg_rating, COUNT(*) as count FROM clinical_feedback GROUP BY feedback_type ORDER BY count DESC`)
     json(res, rows)
   },
 
@@ -733,7 +743,7 @@ const router = {
     const safeComments = body.comments ? escapeStr(String(body.comments)) : 'NULL'
     const safeLesionMappings = body.lesionMappings ? escapeStr(String(body.lesionMappings)) : 'NULL'
     
-    teamDb(`INSERT INTO feedback_logs (id, report_id, user_role, rating, comments, lesion_mappings, created_at) VALUES (${escapeStr(id)}, ${safeReportId}, ${safeRole}, ${safeRating}, ${safeComments}, ${safeLesionMappings}, ${escapeStr(now)})`)
+    await teamDb(`INSERT INTO feedback_logs (id, report_id, user_role, rating, comments, lesion_mappings, created_at) VALUES (${escapeStr(id)}, ${safeReportId}, ${safeRole}, ${safeRating}, ${safeComments}, ${safeLesionMappings}, ${escapeStr(now)})`)
     json(res, { id, submitted: true }, 201)
   },
 
@@ -750,7 +760,7 @@ const router = {
     }
     
     const safeEmail = email.toLowerCase()
-    const existing = teamDb(`SELECT id FROM users WHERE email = ${escapeStr(safeEmail)}`)
+    const existing = await teamDb(`SELECT id FROM users WHERE email = ${escapeStr(safeEmail)}`)
     if (existing.length > 0) {
       return json(res, { error: 'Email already registered' }, 409)
     }
@@ -765,11 +775,11 @@ const router = {
     const safeSpecialty = specialty ? escapeStr(specialty) : 'NULL'
     
     // Insert new user
-    teamDb(`INSERT INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES (${escapeStr(id)}, ${safeName}, ${escapeStr(safeEmail)}, ${escapeStr(passwordHash)}, ${escapeStr(userRole)}, ${safeClinic}, ${safeSpecialty}, 0, ${escapeStr(now)}, ${escapeStr(now)})`)
+    await teamDb(`INSERT INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES (${escapeStr(id)}, ${safeName}, ${escapeStr(safeEmail)}, ${escapeStr(passwordHash)}, ${escapeStr(userRole)}, ${safeClinic}, ${safeSpecialty}, 0, ${escapeStr(now)}, ${escapeStr(now)})`)
     
     // Create and save session token
     const token = generateToken()
-    teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(id)}, ${escapeStr(now)})`)
+    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(id)}, ${escapeStr(now)})`)
     
     json(res, { id, email: safeEmail, displayName: displayName || '', role: userRole, token }, 201)
   },
@@ -783,7 +793,7 @@ const router = {
     }
     
     const safeEmail = email.toLowerCase()
-    const rows = teamDb(`SELECT id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete FROM users WHERE email = ${escapeStr(safeEmail)}`)
+    const rows = await teamDb(`SELECT id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete FROM users WHERE email = ${escapeStr(safeEmail)}`)
     if (rows.length === 0) {
       return json(res, { error: 'Invalid email or password' }, 401)
     }
@@ -796,7 +806,7 @@ const router = {
     // Create and save session token
     const token = generateToken()
     const now = new Date().toISOString()
-    teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(user.id)}, ${escapeStr(now)})`)
+    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(user.id)}, ${escapeStr(now)})`)
     
     json(res, {
       id: user.id,
@@ -810,11 +820,11 @@ const router = {
     })
   },
 
-  'GET /api/me/:userId': (req, res, params) => {
+  'GET /api/me/:userId': async (req, res, params) => {
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
-    if (!verifyUserAuth(req, res, params.userId)) return
+    if (!(await verifyUserAuth(req, res, params.userId))) return
     
-    const rows = teamDb(`SELECT id, display_name, email, role, clinic_name, specialty, onboarding_complete, cycle_length_avg, last_period_start, created_at FROM users WHERE id = ${escapeStr(params.userId)}`)
+    const rows = await teamDb(`SELECT id, display_name, email, role, clinic_name, specialty, onboarding_complete, cycle_length_avg, last_period_start, created_at FROM users WHERE id = ${escapeStr(params.userId)}`)
     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
     const u = rows[0]
     json(res, {
@@ -831,7 +841,7 @@ const router = {
   },
 
   // ===== SEED TESTING ACCOUNTS =====
-  'POST /api/seed/auth': (req, res) => {
+  'POST /api/seed/auth': async (req, res) => {
     if (process.env.NODE_ENV !== 'development') {
       return json(res, { error: 'Forbidden: Seeding is only available in development' }, 403)
     }
@@ -841,42 +851,42 @@ const router = {
     // Seed patient account
     const patientId = randomUUID()
     const patientHash = hashPassword('test123')
-    teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${patientId}', 'Test Patient', 'patient@endobuddy.test', '${patientHash}', 'patient', 1, '${now}', '${now}')`)
-    teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testpatienttoken', '${patientId}', '${now}')`)
+    await teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${patientId}', 'Test Patient', 'patient@endobuddy.test', '${patientHash}', 'patient', 1, '${now}', '${now}')`)
+    await teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testpatienttoken', '${patientId}', '${now}')`)
     results.push({ email: 'patient@endobuddy.test', password: 'test123', role: 'patient', id: patientId, token: 'testpatienttoken' })
     
     // Seed clinician account
     const clinicianId = randomUUID()
     const clinicianHash = hashPassword('test123')
-    teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES ('${clinicianId}', 'Dr. Smith', 'clinician@endobuddy.test', '${clinicianHash}', 'clinician', 'Endo Care Center', 'Minimally Invasive Gynecology', 1, '${now}', '${now}')`)
-    teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testcliniciantoken', '${clinicianId}', '${now}')`)
+    await teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES ('${clinicianId}', 'Dr. Smith', 'clinician@endobuddy.test', '${clinicianHash}', 'clinician', 'Endo Care Center', 'Minimally Invasive Gynecology', 1, '${now}', '${now}')`)
+    await teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testcliniciantoken', '${clinicianId}', '${now}')`)
     results.push({ email: 'clinician@endobuddy.test', password: 'test123', role: 'clinician', id: clinicianId, token: 'testcliniciantoken' })
     
     // Seed admin account
     const adminId = randomUUID()
     const adminHash = hashPassword('admin123')
-    teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${adminId}', 'Admin', 'admin@endobuddy.test', '${adminHash}', 'admin', 1, '${now}', '${now}')`)
-    teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testadmintoken', '${adminId}', '${now}')`)
+    await teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${adminId}', 'Admin', 'admin@endobuddy.test', '${adminHash}', 'admin', 1, '${now}', '${now}')`)
+    await teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testadmintoken', '${adminId}', '${now}')`)
     results.push({ email: 'admin@endobuddy.test', password: 'admin123', role: 'admin', id: adminId, token: 'testadmintoken' })
     
     json(res, { seeded: true, accounts: results })
   },
 
-  'POST /api/seed/:userId': (req, res, params) => {
+  'POST /api/seed/:userId': async (req, res, params) => {
     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
     const userId = params.userId
     
     // Only allow seeding for new users (onboarding_complete = 0 and no existing logs)
-    const userRows = teamDb(`SELECT onboarding_complete, email FROM users WHERE id = ${escapeStr(userId)}`)
+    const userRows = await teamDb(`SELECT onboarding_complete, email FROM users WHERE id = ${escapeStr(userId)}`)
     if (userRows.length === 0) return json(res, { error: 'User not found' }, 404)
     
     // Authentication check for non-anonymous accounts
-    if (userRows[0].email && !verifyUserAuth(req, res, userId)) return
+    if (userRows[0].email && !(await verifyUserAuth(req, res, userId))) return
     
     if (userRows[0].onboarding_complete !== 0) {
       return json(res, { error: 'Seed data can only be generated for new users (before onboarding is complete)' }, 403)
     }
-    const logCount = teamDb(`SELECT COUNT(*) as cnt FROM daily_logs WHERE user_id = ${escapeStr(userId)}`)
+    const logCount = await teamDb(`SELECT COUNT(*) as cnt FROM daily_logs WHERE user_id = ${escapeStr(userId)}`)
     if (logCount[0].cnt > 0) {
       return json(res, { error: 'Seed data can only be generated for users with no existing logs' }, 403)
     }
@@ -897,7 +907,7 @@ const router = {
       
       try {
         const logId = randomUUID()
-        teamDb(`INSERT OR IGNORE INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, pain_level, flow_level, created_at, updated_at) VALUES (${escapeStr(logId)}, ${escapeStr(userId)}, ${escapeStr(dateStr)}, ${dayNum}, ${escapeStr(phase)}, ${painLevel}, ${flowLevel ? escapeStr(flowLevel) : 'NULL'}, ${escapeStr(now.toISOString())}, ${escapeStr(now.toISOString())})`)
+        await teamDb(`INSERT OR IGNORE INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, pain_level, flow_level, created_at, updated_at) VALUES (${escapeStr(logId)}, ${escapeStr(userId)}, ${escapeStr(dateStr)}, ${dayNum}, ${escapeStr(phase)}, ${painLevel}, ${flowLevel ? escapeStr(flowLevel) : 'NULL'}, ${escapeStr(now.toISOString())}, ${escapeStr(now.toISOString())})`)
         
         // Add symptoms for higher pain days
         if (painLevel >= 3) {
@@ -908,7 +918,7 @@ const router = {
           ]
           for (const s of symptoms.slice(0, Math.floor(Math.random() * 3) + 1)) {
             const sid = randomUUID()
-            teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(logId)}, ${escapeStr(s.name)}, ${escapeStr(s.icon)}, ${painLevel}, ${escapeStr(now.toISOString())})`)
+            await teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(logId)}, ${escapeStr(s.name)}, ${escapeStr(s.icon)}, ${painLevel}, ${escapeStr(now.toISOString())})`)
           }
         }
       } catch (e) {
@@ -974,5 +984,5 @@ const server = createServer((req, res) => {
 })
 
 server.listen(PORT, () => {
-  console.log(`EndoBuddy API server running on http://localhost:${PORT}`)
+  console.log(`EndoBuddy API server running on port ${PORT}`)
 })
