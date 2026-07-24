@@ -217,6 +217,36 @@ function json(res, data, status = 200) {
   res.end(JSON.stringify(data))
 }
 
+// Wraps a route handler so a thrown/rejected error inside it results in a
+// 500 response to that one request, instead of an unhandled promise
+// rejection that can crash the entire Node process (taking down every
+// other in-flight and future request too).
+function safeHandle(handler) {
+  return (req, res, params) => {
+    Promise.resolve()
+      .then(() => handler(req, res, params))
+      .catch((err) => {
+        console.error('Unhandled route error:', err.message)
+        if (!res.headersSent) {
+          try {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'Internal server error' }))
+          } catch (e) {
+            // response already in a bad state; nothing more we can do
+          }
+        }
+      })
+  }
+}
+
+// Catch-all safety net: log and continue instead of letting the process die.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection (process kept alive):', err)
+})
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (process kept alive):', err)
+})
+
 try { await teamDb(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT)`) } catch (e) {}
 
 const router = {
@@ -951,7 +981,7 @@ const server = createServer((req, res) => {
 
   // Try exact match first
   if (router[key]) {
-    return router[key](req, res, {})
+    return safeHandle(router[key])(req, res, {})
   }
 
   // Try parameterized routes
@@ -976,7 +1006,7 @@ const server = createServer((req, res) => {
     }
     
     if (match) {
-      return handler(req, res, params)
+      return safeHandle(handler)(req, res, params)
     }
   }
 
