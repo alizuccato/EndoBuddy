@@ -15,11 +15,11 @@ import { useState, useMemo } from 'react'
 import CycleMap from './CycleMap'
 import SymptomHeatmap from './SymptomHeatmap'
 import { InsightCardList } from './InsightCard'
-import { mockCycleData, mockInsights, PHASE_STYLES } from '../utils/mockData'
+import { mockCycleData, PHASE_STYLES } from '../utils/mockData'
 
 export default function InsightsDashboard({ cycleData, insights, onInsightAction }) {
   const data = cycleData || mockCycleData
-  const insightList = insights || mockInsights
+  const hasInsights = insights && insights.length > 0
   
   const currentPhaseStyle = PHASE_STYLES[data.currentPhase] || PHASE_STYLES.menstrual
   
@@ -98,11 +98,23 @@ export default function InsightsDashboard({ cycleData, insights, onInsightAction
 
       {/* Secondary: AI Insight Cards */}
       <section>
-        <InsightCardList
-          insights={insightList}
-          onAction={onInsightAction}
-          maxCards={3}
-        />
+        {hasInsights ? (
+          <InsightCardList
+            insights={insights}
+            onAction={onInsightAction}
+            maxCards={3}
+          />
+        ) : (
+          <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-6 text-center">
+            <p className="text-2xl mb-2">📝</p>
+            <p className="text-sm font-semibold text-gray-700">
+              No insights yet
+            </p>
+            <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
+              Keep logging daily — patterns usually start showing up after about 5 days of tracking.
+            </p>
+          </div>
+        )}
       </section>
 
       {/* Tertiary: Symptom Heatmap */}
