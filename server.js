@@ -870,93 +870,6 @@ const router = {
     })
   },
 
-  // ===== SEED TESTING ACCOUNTS =====
-  'POST /api/seed/auth': async (req, res) => {
-    if (process.env.NODE_ENV !== 'development') {
-      return json(res, { error: 'Forbidden: Seeding is only available in development' }, 403)
-    }
-    const now = new Date().toISOString()
-    const results = []
-    
-    // Seed patient account
-    const patientId = randomUUID()
-    const patientHash = hashPassword('test123')
-    await teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${patientId}', 'Test Patient', 'patient@endobuddy.test', '${patientHash}', 'patient', 1, '${now}', '${now}')`)
-    await teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testpatienttoken', '${patientId}', '${now}')`)
-    results.push({ email: 'patient@endobuddy.test', password: 'test123', role: 'patient', id: patientId, token: 'testpatienttoken' })
-    
-    // Seed clinician account
-    const clinicianId = randomUUID()
-    const clinicianHash = hashPassword('test123')
-    await teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES ('${clinicianId}', 'Dr. Smith', 'clinician@endobuddy.test', '${clinicianHash}', 'clinician', 'Endo Care Center', 'Minimally Invasive Gynecology', 1, '${now}', '${now}')`)
-    await teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testcliniciantoken', '${clinicianId}', '${now}')`)
-    results.push({ email: 'clinician@endobuddy.test', password: 'test123', role: 'clinician', id: clinicianId, token: 'testcliniciantoken' })
-    
-    // Seed admin account
-    const adminId = randomUUID()
-    const adminHash = hashPassword('admin123')
-    await teamDb(`INSERT OR IGNORE INTO users (id, display_name, email, password_hash, role, onboarding_complete, created_at, updated_at) VALUES ('${adminId}', 'Admin', 'admin@endobuddy.test', '${adminHash}', 'admin', 1, '${now}', '${now}')`)
-    await teamDb(`INSERT OR IGNORE INTO sessions (token, user_id, created_at) VALUES ('testadmintoken', '${adminId}', '${now}')`)
-    results.push({ email: 'admin@endobuddy.test', password: 'admin123', role: 'admin', id: adminId, token: 'testadmintoken' })
-    
-    json(res, { seeded: true, accounts: results })
-  },
-
-  'POST /api/seed/:userId': async (req, res, params) => {
-    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
-    const userId = params.userId
-    
-    // Only allow seeding for new users (onboarding_complete = 0 and no existing logs)
-    const userRows = await teamDb(`SELECT onboarding_complete, email FROM users WHERE id = ${escapeStr(userId)}`)
-    if (userRows.length === 0) return json(res, { error: 'User not found' }, 404)
-    
-    // Authentication check for non-anonymous accounts
-    if (userRows[0].email && !(await verifyUserAuth(req, res, userId))) return
-    
-    if (userRows[0].onboarding_complete !== 0) {
-      return json(res, { error: 'Seed data can only be generated for new users (before onboarding is complete)' }, 403)
-    }
-    const logCount = await teamDb(`SELECT COUNT(*) as cnt FROM daily_logs WHERE user_id = ${escapeStr(userId)}`)
-    if (logCount[0].cnt > 0) {
-      return json(res, { error: 'Seed data can only be generated for users with no existing logs' }, 403)
-    }
-    
-    const now = new Date()
-    
-    // Generate 30 days of realistic sample data
-    for (let i = 30; i >= 0; i--) {
-      const date = new Date(now.getTime() - i * 86400000)
-      const dateStr = date.toISOString().split('T')[0]
-      const dayNum = (30 - i) + 1
-      
-      let phase, painLevel, flowLevel
-      if (dayNum <= 5) { phase = 'menstrual'; painLevel = Math.floor(Math.random() * 3) + 6; flowLevel = ['heavy','medium','light','spotting',null][dayNum - 1] }
-      else if (dayNum <= 14) { phase = 'follicular'; painLevel = Math.max(0, Math.floor(Math.random() * 3)) }
-      else if (dayNum === 15) { phase = 'ovulatory'; painLevel = Math.floor(Math.random() * 3) + 3 }
-      else { phase = 'luteal'; painLevel = Math.floor(Math.random() * 4) + 3 }
-      
-      try {
-        const logId = randomUUID()
-        await teamDb(`INSERT OR IGNORE INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, pain_level, flow_level, created_at, updated_at) VALUES (${escapeStr(logId)}, ${escapeStr(userId)}, ${escapeStr(dateStr)}, ${dayNum}, ${escapeStr(phase)}, ${painLevel}, ${flowLevel ? escapeStr(flowLevel) : 'NULL'}, ${escapeStr(now.toISOString())}, ${escapeStr(now.toISOString())})`)
-        
-        // Add symptoms for higher pain days
-        if (painLevel >= 3) {
-          const symptoms = [
-            { name: 'Cramping', icon: '⚡' },
-            { name: 'Bloating', icon: '🫃' },
-            { name: 'Fatigue', icon: '😴' },
-          ]
-          for (const s of symptoms.slice(0, Math.floor(Math.random() * 3) + 1)) {
-            const sid = randomUUID()
-            await teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(logId)}, ${escapeStr(s.name)}, ${escapeStr(s.icon)}, ${painLevel}, ${escapeStr(now.toISOString())})`)
-          }
-        }
-      } catch (e) {
-        // Skip duplicates
-      }
-    }
-    json(res, { seeded: true, userId })
-  },
 }
 
 // Create server
@@ -976,7 +889,7 @@ const server = createServer((req, res) => {
   const key = `${req.method} ${path}`
   
   // Check rate limiting on all requests
-  const isStrict = ['/api/register', '/api/login', '/api/seed'].some(route => path.startsWith(route))
+  const isStrict = ['/api/register', '/api/login'].some(route => path.startsWith(route))
   if (!checkRateLimit(req, res, isStrict)) return
 
   // Try exact match first

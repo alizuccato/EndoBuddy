@@ -144,15 +144,7 @@ export async function getFeedbackStats() {
 }
 
 // ============================================================
-// Seed Data (Demo)
-// ============================================================
-
-export async function seedDemoData(userId) {
-  return request(`/seed/${userId || getUserId()}`, { method: 'POST' })
-}
-
-// ============================================================
-// Combined: Save onboarding + seed demo data
+// Onboarding
 // ============================================================
 
 export async function completeOnboarding(onboardingData) {
@@ -162,9 +154,6 @@ export async function completeOnboarding(onboardingData) {
     cycleLength: onboardingData.cycleLength || 28,
     lastPeriodStart: onboardingData.lastPeriodStart || null,
   })
-  
-  // Seed demo data for the new user
-  await seedDemoData(user.id)
   
   return user
 }
