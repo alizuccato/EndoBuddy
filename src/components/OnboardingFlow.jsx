@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { PHASE_STYLES } from '../utils/mockData'
-import { getLocalDateString } from '../utils/dateHelpers'
+import { getLocalDateString, getDayOfCycle } from '../utils/dateHelpers'
 
 const SYMPTOM_OPTIONS = [
   { id: 'pelvic_pain', label: 'Pelvic Pain / Cramping', icon: '⚡', category: 'pain' },
@@ -76,10 +76,8 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
   // Calculate current phase based on entered data
   const estimatedPhase = useMemo(() => {
     if (!onboardingData.lastPeriodStart) return 'follicular'
-    const startDate = new Date(onboardingData.lastPeriodStart)
-    const today = new Date()
-    const dayDiff = Math.floor((today - startDate) / 86400000)
-    const cycleDay = ((dayDiff % (onboardingData.cycleLength || 28)) + 1)
+    const cycleDay = getDayOfCycle(onboardingData.lastPeriodStart, onboardingData.cycleLength || 28)
+    if (cycleDay == null) return 'follicular'
     
     if (cycleDay <= 5) return 'menstrual'
     if (cycleDay <= 14) return 'follicular'
