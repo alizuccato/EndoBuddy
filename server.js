@@ -9,6 +9,8 @@
 import { createServer } from 'http'
 import { createClient } from '@libsql/client'
 import { randomUUID, scryptSync, timingSafeEqual } from 'crypto'
+import { readFileSync, existsSync } from 'fs'
+import { join, extname } from 'path'
 
 const PORT = process.env.PORT || 3001
 
@@ -104,6 +106,8 @@ function requireUUID(val, name) {
 
 // ===== CORS ORIGIN HARDENING =====
 const ALLOWED_ORIGINS = [
+  'https://myendobuddy.com',
+  'https://www.myendobuddy.com',
   'https://endobuddy.ctonew.app',
   'http://localhost:3000',
   'http://localhost:5173',
@@ -111,7 +115,7 @@ const ALLOWED_ORIGINS = [
 ]
 function setCorsHeaders(req, res) {
   const origin = req.headers.origin
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : 'https://endobuddy.ctonew.app'
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : 'https://myendobuddy.com'
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
@@ -215,6 +219,48 @@ function json(res, data, status = 200) {
     'Content-Type': 'application/json'
   })
   res.end(JSON.stringify(data))
+}
+
+// ===== STATIC FRONTEND SERVING =====
+// Serves the built React app (output of `vite build`) so that visiting the
+// site in a browser returns the actual app instead of a JSON 404. Any path
+// that isn't a real file in dist/ falls back to index.html so client-side
+// routing (React Router, etc.) still works on refresh/deep links.
+const DIST_DIR = join(process.cwd(), 'dist')
+const MIME_TYPES = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+}
+
+function serveStatic(req, res, pathname) {
+  // Prevent path traversal outside of dist/
+  const safePath = join(DIST_DIR, pathname).startsWith(DIST_DIR)
+    ? join(DIST_DIR, pathname)
+    : DIST_DIR
+
+  let filePath = pathname === '/' ? join(DIST_DIR, 'index.html') : safePath
+  if (!existsSync(filePath) || !filePath.startsWith(DIST_DIR)) {
+    filePath = join(DIST_DIR, 'index.html') // SPA fallback for client-side routes
+  }
+
+  if (!existsSync(filePath)) {
+    return json(res, { error: 'Frontend build not found. Did the build step run (npm run build)?' }, 500)
+  }
+
+  const ext = extname(filePath)
+  res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' })
+  res.end(readFileSync(filePath))
 }
 
 // Wraps a route handler so a thrown/rejected error inside it results in a
@@ -921,6 +967,13 @@ const server = createServer((req, res) => {
     if (match) {
       return safeHandle(handler)(req, res, params)
     }
+  }
+
+  // Anything that isn't a recognized API route: serve the built React app
+  // (with an SPA fallback to index.html) instead of a JSON 404. Unmatched
+  // /api/* requests still correctly fall through to a JSON 404 below.
+  if (req.method === 'GET' && !path.startsWith('/api/')) {
+    return serveStatic(req, res, path)
   }
 
   json(res, { error: 'Not found' }, 404)
