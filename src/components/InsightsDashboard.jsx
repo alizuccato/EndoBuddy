@@ -15,10 +15,10 @@ import { useState, useMemo } from 'react'
 import CycleMap from './CycleMap'
 import SymptomHeatmap from './SymptomHeatmap'
 import { InsightCardList } from './InsightCard'
-import { mockCycleData, PHASE_STYLES } from '../utils/mockData'
+import { PHASE_STYLES } from '../utils/mockData'
 
 export default function InsightsDashboard({ cycleData, insights, onInsightAction }) {
-  const data = cycleData || mockCycleData
+  const data = cycleData || {}
   const hasInsights = insights && insights.length > 0
   
   const currentPhaseStyle = PHASE_STYLES[data.currentPhase] || PHASE_STYLES.menstrual

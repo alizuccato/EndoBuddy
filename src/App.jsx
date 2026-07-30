@@ -14,7 +14,6 @@ import PhaseAwareHome from './components/PhaseAwareHome'
 import ClinicPortal from './components/ClinicPortal'
 import PremiumUpgradeFlow from './components/PremiumUpgradeFlow'
 import LoginFlow from './components/LoginFlow'
-import { mockCycleData } from './utils/mockData'
 import { getUserId, getUser, getLogs, saveDailyLog, completeOnboarding, getPatterns } from './services/dbService'
 import { getLocalDateString, getDayOfCycle } from './utils/dateHelpers'
 
@@ -166,36 +165,54 @@ function App() {
   const isPatient = userRole === 'patient'
   const isClinician = userRole === 'clinician'
 
+  // Builds the cycle/calendar data the rest of the app renders. This is
+  // ALWAYS derived from the user's real logs (recentLogs, from the DB) —
+  // it never falls back to fabricated sample data. If the user has no
+  // profile yet and/or hasn't logged anything, the arrays are simply
+  // empty and downstream components render their real "no data yet"
+  // empty states instead of a fake pre-filled calendar.
   const cycleData = useMemo(() => {
-    const cycleLength = userProfile?.cycleLength || userProfile?.cycle_length_avg || 28;
-    const lastPeriodStart = userProfile?.lastPeriodStart || userProfile?.last_period_start;
-    if (!userProfile || !lastPeriodStart) {
-      return mockCycleData
-    }
-    try {
-      const currentDayNum = getDayOfCycle(lastPeriodStart, cycleLength)
-      if (currentDayNum == null) return mockCycleData
-      
-      let currentPhase = 'follicular'
-      if (currentDayNum <= 5) currentPhase = 'menstrual'
-      else if (currentDayNum <= 14) currentPhase = 'follicular'
-      else if (currentDayNum === 15) currentPhase = 'ovulatory'
-      else currentPhase = 'luteal'
-      
-      return {
-        ...mockCycleData,
-        currentPhase,
-        currentDayNum,
-        cycleStartDate: lastPeriodStart,
-        cycleLength,
-        periodLength: 5,
-        isRealData: true
+    const cycleLength = userProfile?.cycleLength || userProfile?.cycle_length_avg || 28
+    const lastPeriodStart = userProfile?.lastPeriodStart || userProfile?.last_period_start || null
+    const today = getLocalDateString()
+
+    const days = recentLogs.map(log => ({
+      date: log.date,
+      dayNum: log.cycleDay ?? null,
+      phase: log.cyclePhase || null,
+      painLevel: log.painLevel ?? 0,
+      symptoms: log.symptoms || [],
+      flowLevel: log.flowLevel || null,
+      isFuture: log.date > today,
+      isToday: log.date === today,
+    }))
+
+    let currentPhase = null
+    let currentDayNum = null
+    if (lastPeriodStart) {
+      try {
+        currentDayNum = getDayOfCycle(lastPeriodStart, cycleLength)
+        if (currentDayNum != null) {
+          if (currentDayNum <= 5) currentPhase = 'menstrual'
+          else if (currentDayNum <= 14) currentPhase = 'follicular'
+          else if (currentDayNum === 15) currentPhase = 'ovulatory'
+          else currentPhase = 'luteal'
+        }
+      } catch (e) {
+        console.error('Error computing cycle day:', e)
       }
-    } catch (e) {
-      console.error('Error computing cycle data:', e)
-      return mockCycleData
     }
-  }, [userProfile])
+
+    return {
+      days,
+      currentPhase,
+      currentDayNum,
+      cycleStartDate: lastPeriodStart,
+      cycleLength,
+      periodLength: 5,
+      hasRealData: days.length > 0,
+    }
+  }, [userProfile, recentLogs])
 
   const patientNavItems = [
     { id: 'home', label: 'Home', icon: '\u{1F338}' },
@@ -323,7 +340,7 @@ function App() {
       {showPremiumUpgrade && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={handleCloseUpgrade} />
-          <div className="relative z-10"><PremiumUpgradeFlow onClose={handleCloseUpgrade} onUpgrade={handleUpgradeComplete} userId={userId} /></div>
+          <div className="relative z-10"><PremiumUpgradeFlow onClose={handleCloseUpgrade} onUpgrade={handleUpgradeComplete} userId={userId} cycleData={cycleData} /></div>
         </div>
       )}
     </ComfortMode>

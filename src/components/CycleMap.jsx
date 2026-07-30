@@ -206,7 +206,7 @@ export default function CycleMap({ cycleData }) {
             className="text-2xl font-bold"
             fill="#1F2937"
           >
-            Day {currentDayNum}
+            {currentDayNum != null ? `Day ${currentDayNum}` : '—'}
           </text>
           <text
             x={CENTER}

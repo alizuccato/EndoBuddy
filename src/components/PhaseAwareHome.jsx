@@ -11,7 +11,7 @@
 
 import { useState, useMemo } from 'react'
 import EmpathyMessage from './EmpathyMessage'
-import { mockCycleData, PHASE_STYLES } from '../utils/mockData'
+import { PHASE_STYLES } from '../utils/mockData'
 import wellnessData from '../data/phase-wellness-library.json'
 
 const PHASE_CONTENT = {
@@ -46,7 +46,7 @@ const PHASE_CONTENT = {
 }
 
 export default function PhaseAwareHome({ onStartLogging, todayLogged, recentLogs, cycleData, isPremium, onUpgrade }) {
-  const data = cycleData || mockCycleData
+  const data = cycleData || {}
   const phase = data.currentPhase || 'luteal'
   const dayNum = data.currentDayNum || 1
   const cycleLen = data.cycleLength || 28

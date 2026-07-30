@@ -7,7 +7,7 @@
  */
 
 import { useState } from 'react'
-import { mockCycleData, PHASE_STYLES } from '../utils/mockData'
+import { PHASE_STYLES } from '../utils/mockData'
 
 // Real Stripe Payment Link for EndoBuddy Premium. NOTE: a single Payment
 // Link checks out one fixed Price — it can't switch between monthly/annual
@@ -33,10 +33,12 @@ const FEATURES = [
   { name: 'Surgical Planning Summary', free: false, premium: true },
 ]
 
-export default function PremiumUpgradeFlow({ onClose, onUpgrade, userId }) {
+export default function PremiumUpgradeFlow({ onClose, onUpgrade, userId, cycleData }) {
   const [billingCycle, setBillingCycle] = useState('yearly')
 
-  const phase = mockCycleData?.currentPhase || 'luteal'
+  // Purely cosmetic theming default — not user data — used only when the
+  // user's real cycle phase isn't known yet (e.g. onboarding incomplete).
+  const phase = cycleData?.currentPhase || 'luteal'
   const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
 
   const monthlyPrice = billingCycle === 'yearly' ? 5.99 : 8.99
