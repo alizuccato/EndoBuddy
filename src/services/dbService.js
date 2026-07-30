@@ -9,10 +9,28 @@ import { getLocalDateString } from '../utils/dateHelpers'
 
 const API_BASE = '/api'
 
+// Session token storage — set after a successful login/register, and sent
+// as a Bearer token on every request from then on so the server's
+// verifyUserAuth() can confirm requests for accounts that have an email
+// (i.e. accounts that opted into being recoverable across devices).
+function getToken() {
+  return localStorage.getItem('endobuddy_session_token')
+}
+function setToken(token) {
+  if (token) localStorage.setItem('endobuddy_session_token', token)
+}
+function clearToken() {
+  localStorage.removeItem('endobuddy_session_token')
+}
+
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`
+  const token = getToken()
   const config = {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...options,
   }
   
@@ -45,6 +63,35 @@ export async function createUser(userData) {
   })
   localStorage.setItem('endobuddy_user_id', user.id)
   return user
+}
+
+// Creates a recoverable account (email + password) instead of the quick
+// anonymous one createUser() makes. Lets someone log back in later from
+// any device or browser, since it doesn't depend on localStorage.
+export async function registerUser(userData) {
+  const user = await request('/register', {
+    method: 'POST',
+    body: JSON.stringify(userData),
+  })
+  localStorage.setItem('endobuddy_user_id', user.id)
+  setToken(user.token)
+  return user
+}
+
+// Logs into an existing email+password account from any browser/device.
+export async function loginUser(email, password) {
+  const user = await request('/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
+  localStorage.setItem('endobuddy_user_id', user.id)
+  setToken(user.token)
+  return user
+}
+
+export function logoutUser() {
+  clearToken()
+  localStorage.removeItem('endobuddy_user_id')
 }
 
 export async function getUser(userId) {

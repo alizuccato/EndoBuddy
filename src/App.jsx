@@ -115,10 +115,12 @@ function App() {
     setUserId(userData.id)
     setUserRole(userData.role || 'patient')
     setShowLogin(false)
+    let onboardingDone = userData.onboardingComplete
     try {
       const fullUser = await getUser(userData.id)
       if (fullUser) {
         setUserProfile(fullUser)
+        onboardingDone = fullUser.onboarding_complete === 1 || fullUser.onboarding_complete === true
       } else {
         setUserProfile(userData)
       }
@@ -126,7 +128,7 @@ function App() {
       setUserProfile(userData)
     }
     if (userData.role === 'clinician') { setShowOnboarding(false); setCurrentView('clinic') }
-    else { setShowOnboarding(true); setCurrentView('home') }
+    else { setShowOnboarding(!onboardingDone); setCurrentView('home') }
   }, [])
 
   const handleLoginSkip = useCallback(() => {

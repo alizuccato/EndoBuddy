@@ -1,12 +1,19 @@
 import { useState, useCallback } from 'react'
-import { createUser, getUserId } from '../services/dbService'
+import { createUser, registerUser, loginUser } from '../services/dbService'
 
 /**
  * LoginFlow — Role-based login for Patients and Clinicians
  *
- * Two-step flow:
- *   1. Role selection (Patient / Clinician)
- *   2. Quick profile form tailored to the selected role
+ * Steps:
+ *   'role'           — Role selection (Patient / Clinician), or "Log in"
+ *                       for someone who already has an account
+ *   'login'          — Email + password sign-in for an existing account
+ *   'patient-form'   — Quick profile form for patients. Email/password are
+ *                       optional here: leaving them blank creates a fast,
+ *                       anonymous local account like before; filling them
+ *                       in creates a recoverable account (registerUser)
+ *                       that can be logged into from any device.
+ *   'clinician-form' — Same idea, for clinicians.
  *
  * WCAG-compliant with 44x44px touch targets on mobile.
  * Transitions seamlessly into the app via onComplete callback.
@@ -15,22 +22,30 @@ export default function LoginFlow({ onComplete, onSkip }) {
   const [step, setStep] = useState('role')
   const [role, setRole] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [name, setName] = useState('')
   const [clinicName, setClinicName] = useState('')
   const [specialty, setSpecialty] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
 
   const handleSelectRole = useCallback((selectedRole) => {
+    setError('')
     setRole(selectedRole)
     setStep(selectedRole === 'patient' ? 'patient-form' : 'clinician-form')
   }, [])
 
   const handleBack = useCallback(() => {
+    setError('')
     setStep('role')
     setRole(null)
   }, [])
 
   const handleSubmit = useCallback(async () => {
     setLoading(true)
+    setError('')
     try {
       const userData = {
         displayName: name || (role === 'patient' ? 'Patient' : 'Clinician'),
@@ -38,15 +53,31 @@ export default function LoginFlow({ onComplete, onSkip }) {
         clinicName: role === 'clinician' ? clinicName : undefined,
         specialty: role === 'clinician' ? specialty : undefined,
       }
-      const user = await createUser(userData)
+      // If they filled in email + password, create a recoverable account
+      // instead of a quick anonymous one.
+      const user = (email && password)
+        ? await registerUser({ ...userData, email, password })
+        : await createUser(userData)
       onComplete({ ...user, role })
-    } catch {
-      // Fallback: use local ID with role
-      onComplete({ id: getUserId(), role })
+    } catch (e) {
+      setError(e.message || 'Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
-  }, [name, role, clinicName, specialty, onComplete])
+  }, [name, role, clinicName, specialty, email, password, onComplete])
+
+  const handleLogin = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const user = await loginUser(loginEmail, loginPassword)
+      onComplete(user)
+    } catch (e) {
+      setError(e.message === 'Invalid email or password' ? e.message : 'Could not log in. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }, [loginEmail, loginPassword, onComplete])
 
   const handleSkip = useCallback(() => onSkip(), [onSkip])
 
@@ -96,10 +127,53 @@ export default function LoginFlow({ onComplete, onSkip }) {
               </div>
             </button>
 
-            <div className="text-center pt-2">
+            <div className="text-center pt-2 space-y-2">
+              <button onClick={() => { setError(''); setStep('login') }}
+                className="block w-full text-sm font-medium text-endo-purple hover:text-endo-pink transition-colors min-h-[44px]">
+                Already have an account? Log in
+              </button>
               <button onClick={handleSkip}
                 className="text-sm text-gray-400 hover:text-gray-600 transition-colors min-h-[44px] px-4">
                 Skip for now
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Log in to an existing (email + password) account */}
+        {step === 'login' && (
+          <div className="card">
+            <button onClick={handleBack}
+              className="text-sm text-gray-400 hover:text-gray-600 mb-4 flex items-center gap-1 min-h-[44px]"
+              aria-label="Go back">
+              <span>←</span> Back
+            </button>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">Welcome back 🌸</h2>
+            <p className="text-sm text-gray-500 mb-6">Log in to pick up where you left off, on any device.</p>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+                <input id="login-email" type="email" value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="you@email.com"
+                  className="input-field min-h-[44px]" autoFocus autoComplete="email" />
+              </div>
+              <div>
+                <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
+                <input id="login-password" type="password" value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Your password"
+                  className="input-field min-h-[44px]" autoComplete="current-password"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && loginEmail && loginPassword && !loading) handleLogin() }} />
+              </div>
+              {error && <p className="text-sm text-red-500" role="alert">{error}</p>}
+              <button onClick={handleLogin} disabled={loading || !loginEmail || !loginPassword}
+                className="w-full btn-primary text-lg py-4 flex items-center justify-center gap-2 min-h-[44px] disabled:opacity-50">
+                {loading ? (
+                  <span className="inline-block animate-pulse">Logging in...</span>
+                ) : (
+                  <><span>🌸</span> Log In</>
+                )}
               </button>
             </div>
           </div>
@@ -123,6 +197,20 @@ export default function LoginFlow({ onComplete, onSkip }) {
                   placeholder="Enter your name (optional)"
                   className="input-field min-h-[44px]" autoFocus />
               </div>
+              <div className="pt-2 border-t border-gray-100">
+                <p className="text-xs text-gray-500 mb-3">Add an email &amp; password (optional) so you can log back in from any device — otherwise your account only lives in this browser.</p>
+                <label htmlFor="patient-email" className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+                <input id="patient-email" type="email" value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@email.com (optional)"
+                  className="input-field min-h-[44px] mb-3" autoComplete="email" />
+                <label htmlFor="patient-password" className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
+                <input id="patient-password" type="password" value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 6 characters (optional)"
+                  className="input-field min-h-[44px]" autoComplete="new-password" />
+              </div>
+              {error && <p className="text-sm text-red-500" role="alert">{error}</p>}
               <button onClick={handleSubmit} disabled={loading}
                 className="w-full btn-primary text-lg py-4 flex items-center justify-center gap-2 min-h-[44px] disabled:opacity-50">
                 {loading ? (
@@ -167,6 +255,20 @@ export default function LoginFlow({ onComplete, onSkip }) {
                   placeholder="e.g., Minimally Invasive Gynecologic Surgery"
                   className="input-field min-h-[44px]" />
               </div>
+              <div className="pt-2 border-t border-gray-100">
+                <p className="text-xs text-gray-500 mb-3">Add an email &amp; password (optional) so you can log back in from any device — otherwise your account only lives in this browser.</p>
+                <label htmlFor="clinician-email" className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+                <input id="clinician-email" type="email" value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@clinic.com (optional)"
+                  className="input-field min-h-[44px] mb-3" autoComplete="email" />
+                <label htmlFor="clinician-password" className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
+                <input id="clinician-password" type="password" value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 6 characters (optional)"
+                  className="input-field min-h-[44px]" autoComplete="new-password" />
+              </div>
+              {error && <p className="text-sm text-red-500" role="alert">{error}</p>}
               <button onClick={handleSubmit} disabled={loading}
                 className="w-full btn-primary text-lg py-4 flex items-center justify-center gap-2 min-h-[44px] disabled:opacity-50">
                 {loading ? (
