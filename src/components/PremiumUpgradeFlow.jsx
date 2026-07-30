@@ -9,6 +9,19 @@
 import { useState } from 'react'
 import { mockCycleData, PHASE_STYLES } from '../utils/mockData'
 
+// Real Stripe Payment Link for EndoBuddy Premium. NOTE: a single Payment
+// Link checks out one fixed Price — it can't switch between monthly/annual
+// on its own. This link currently corresponds to ONE of the two prices
+// below. The Annual/Monthly toggle in the UI is still just a cosmetic
+// preview until a second Payment Link is created for the other price;
+// both buttons currently lead to the same checkout.
+const STRIPE_PAYMENT_LINK = 'https://buy.stripe.com/9B65kF4YiarC9UwgcQbMQ02'
+// Reference only — not used directly since Payment Links don't accept a
+// price override via URL. Useful once you wire up a second Payment Link
+// or move to server-created Checkout Sessions.
+// Annual:  price_1Twua0RkxErY3Eu59wtcgiKl
+// Monthly: price_1Twua0RkxErY3Eu5otstZgNX
+
 const FEATURES = [
   { name: 'Daily Symptom Tracking', free: true, premium: true },
   { name: 'Basic Cycle Insights', free: true, premium: true },
@@ -20,12 +33,8 @@ const FEATURES = [
   { name: 'Surgical Planning Summary', free: false, premium: true },
 ]
 
-export default function PremiumUpgradeFlow({ onClose, onUpgrade }) {
+export default function PremiumUpgradeFlow({ onClose, onUpgrade, userId }) {
   const [billingCycle, setBillingCycle] = useState('yearly')
-  const [checkoutStep, setCheckoutStep] = useState('landing')
-  const [email, setEmail] = useState('')
-  const [cardNumber, setCardNumber] = useState('')
-  const [processing, setProcessing] = useState(false)
 
   const phase = mockCycleData?.currentPhase || 'luteal'
   const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
@@ -33,83 +42,14 @@ export default function PremiumUpgradeFlow({ onClose, onUpgrade }) {
   const monthlyPrice = billingCycle === 'yearly' ? 5.99 : 8.99
   const yearlyTotal = 5.99 * 12
 
+  // Sends the shopper to Stripe's own hosted checkout page instead of
+  // collecting card details ourselves. client_reference_id lets you match
+  // the Stripe payment back to this app's user record later (e.g. from a
+  // webhook or the Stripe Dashboard).
   const handleCheckout = () => {
-    setProcessing(true)
-    setTimeout(() => {
-      setProcessing(false)
-      setCheckoutStep('success')
-      if (onUpgrade) onUpgrade()
-    }, 1500)
-  }
-
-  // ===== SUCCESS VIEW =====
-  if (checkoutStep === 'success') {
-    return (
-      <div className={`min-h-screen ${phaseStyle.bg} flex items-center justify-center p-6`}>
-        <div className="max-w-sm w-full text-center space-y-6">
-          <div className="text-7xl animate-bounce">🌟</div>
-          <h2 className="text-2xl font-bold text-gray-900">Welcome to Premium!</h2>
-          <p className="text-gray-600">Your insights, reports, and personalized plans are now unlocked.</p>
-          <button onClick={onClose} className="btn-primary text-lg px-10 py-3">
-            Start Exploring
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // ===== CHECKOUT VIEW =====
-  if (checkoutStep === 'checkout') {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-6 space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-gray-900">Complete Payment</h2>
-            <button onClick={() => setCheckoutStep('landing')} className="text-sm text-gray-400 hover:text-gray-600">✕</button>
-          </div>
-
-          <div className="bg-endo-purple/5 rounded-xl p-4 border border-endo-purple/10">
-            <p className="text-sm font-semibold text-gray-800">EndoBuddy Premium</p>
-            <p className="text-2xl font-bold text-endo-purple">${monthlyPrice}<span className="text-sm font-normal text-gray-500">/mo</span></p>
-            {billingCycle === 'yearly' && <p className="text-xs text-green-600">You save 30% (${yearlyTotal.toFixed(2)}/year)</p>}
-          </div>
-
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm rounded-xl border border-gray-200 focus:border-endo-purple outline-none"
-                placeholder="you@email.com" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">Card Number</label>
-              <input type="text" value={cardNumber} onChange={e => setCardNumber(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm rounded-xl border border-gray-200 focus:border-endo-purple outline-none"
-                placeholder="4242 4242 4242 4242" maxLength={19} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">Expiry</label>
-                <input type="text" className="w-full px-3 py-2.5 text-sm rounded-xl border border-gray-200 focus:border-endo-purple outline-none" placeholder="MM/YY" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">CVC</label>
-                <input type="text" className="w-full px-3 py-2.5 text-sm rounded-xl border border-gray-200 focus:border-endo-purple outline-none" placeholder="123" maxLength={4} />
-              </div>
-            </div>
-          </div>
-
-          <p className="text-[10px] text-gray-400 text-center">🔒 Secured with bank-grade encryption. Your health data stays private.</p>
-
-          <button onClick={handleCheckout} disabled={processing || !email || !cardNumber}
-            className="w-full py-3.5 text-base font-bold text-white rounded-xl transition-all disabled:opacity-50"
-            style={{ backgroundColor: phaseStyle.color || '#7C3AED' }}>
-            {processing ? 'Processing...' : `Pay $${monthlyPrice}/mo`}
-          </button>
-          <button onClick={() => setCheckoutStep('landing')} className="w-full text-xs text-gray-500 hover:text-gray-700">Cancel</button>
-        </div>
-      </div>
-    )
+    const url = new URL(STRIPE_PAYMENT_LINK)
+    if (userId) url.searchParams.set('client_reference_id', userId)
+    window.location.href = url.toString()
   }
 
   // ===== LANDING PAGE =====
@@ -214,12 +154,12 @@ export default function PremiumUpgradeFlow({ onClose, onUpgrade }) {
             </div>
           </div>
 
-          <button onClick={() => setCheckoutStep('checkout')}
+          <button onClick={handleCheckout}
             className="w-full py-3.5 text-base font-bold text-white rounded-xl transition-all hover:opacity-90 shadow-lg"
             style={{ backgroundColor: phaseStyle.color || '#7C3AED' }}>
             Unlock My Insights
           </button>
-          <p className="text-center text-[10px] text-gray-400 mt-3">Cancel anytime. No questions asked. 🔒 HIPAA-aligned</p>
+          <p className="text-center text-[10px] text-gray-400 mt-3">You'll complete secure payment on Stripe. Cancel anytime. 🔒 HIPAA-aligned</p>
         </div>
 
         {/* Trust */}

@@ -46,6 +46,40 @@ function App() {
     }
   }, [])
 
+  // Stripe's Payment Link redirects the browser back here after a real
+  // payment completes (once you set the Payment Link's "after payment"
+  // redirect URL, in the Stripe Dashboard, to https://myendobuddy.com/?upgraded=1).
+  // We flip isPremium on optimistically for instant feedback, then poll the
+  // server briefly for the DB's real is_premium flag — which only the
+  // Stripe webhook (verified by signature, not guessable by a visitor) is
+  // allowed to set. The webhook is usually near-instant, but this covers
+  // the small window where the redirect lands before Stripe's event does.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('upgraded') !== '1') return
+
+    setIsPremium(true)
+    params.delete('upgraded')
+    const cleanUrl = window.location.pathname + (params.toString() ? `?${params.toString()}` : '')
+    window.history.replaceState({}, '', cleanUrl)
+
+    const idToConfirm = getUserId()
+    if (!idToConfirm) return
+    let attempts = 0
+    const poll = setInterval(async () => {
+      attempts += 1
+      try {
+        const user = await getUser(idToConfirm)
+        if (user && (user.is_premium === 1 || user.is_premium === true)) {
+          setIsPremium(true)
+          clearInterval(poll)
+        }
+      } catch (e) { /* keep retrying */ }
+      if (attempts >= 6) clearInterval(poll) // ~9s of polling, then give up quietly
+    }, 1500)
+    return () => clearInterval(poll)
+  }, [])
+
   useEffect(() => {
     async function checkUser() {
       const existingUserId = getUserId()
@@ -54,6 +88,7 @@ function App() {
         setUserId(user.id)
         setUserProfile(user)
         setUserRole(user.role || 'patient')
+        setIsPremium(prev => prev || user.is_premium === 1 || user.is_premium === true)
         setShowLogin(false)
         setShowOnboarding(false)
         try {
@@ -286,7 +321,7 @@ function App() {
       {showPremiumUpgrade && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={handleCloseUpgrade} />
-          <div className="relative z-10"><PremiumUpgradeFlow onClose={handleCloseUpgrade} onUpgrade={handleUpgradeComplete} /></div>
+          <div className="relative z-10"><PremiumUpgradeFlow onClose={handleCloseUpgrade} onUpgrade={handleUpgradeComplete} userId={userId} /></div>
         </div>
       )}
     </ComfortMode>
@@ -325,12 +360,21 @@ function ReportsView({ recentLogs, cycleData, patterns }) {
   )
 }
 
-function LockedFeature({ onUpgrade }) {
+const LOCKED_FEATURE_COPY = {
+  meals: { icon: '\u{1F37D}', description: 'Unlock personalized phase-based meal plans tailored to your symptoms and cravings.' },
+  deep: { icon: '\u{1F4CA}', description: 'Unlock your AI-powered deep report, correlating pain, symptoms, and phase across your full history.' },
+  surgical: { icon: '\u{1F52C}', description: 'Unlock a lesion-mapped surgical planning summary to bring straight to your specialist.' },
+  treatment: { icon: '\u{1F48A}', description: 'Unlock your treatment response dashboard to see what\u2019s actually working over time.' },
+  viz: { icon: '\u2728', description: 'Unlock advanced visualizations of your cycle, symptoms, and pain patterns.' },
+}
+
+function LockedFeature({ onUpgrade, feature = 'meals' }) {
+  const copy = LOCKED_FEATURE_COPY[feature] || { icon: '\u{1F512}', description: 'Upgrade to unlock this advanced feature and get the full picture of your cycle health.' }
   return (
     <div className="card text-center py-12">
-      <div className="text-6xl mb-4">{'\u{1F512}'}</div>
+      <div className="text-6xl mb-4">{copy.icon}</div>
       <h3 className="text-xl font-bold text-gray-800 mb-2">Premium Feature</h3>
-      <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">Upgrade to unlock this advanced feature and get the full picture of your cycle health.</p>
+      <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">{copy.description}</p>
       <button onClick={onUpgrade} className="btn-primary text-lg px-10 py-3 shadow-lg">{'\u{2B50}'} Unlock Premium</button>
     </div>
   )
@@ -352,11 +396,11 @@ function PremiumView({ isPremium, onUpgrade, cycleData, patterns }) {
             className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl transition-all ${premiumTab===tab.id?'bg-endo-purple text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}><span>{tab.icon}</span><span>{tab.label}</span></button>
         ))}
       </div>
-      {premiumTab==='meals'&&<PremiumMealPlans currentPhase={phase} isPremium={isPremium}/>}
-      {premiumTab==='deep'&&<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={patterns} isPremium={isPremium}/></div>}
-      {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns}/>:<LockedFeature onUpgrade={onUpgrade}/>)}
-      {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard/>:<LockedFeature onUpgrade={onUpgrade}/>)}
-      {premiumTab==='viz'&&<PremiumVisualizations patterns={patterns} isPremium={isPremium} currentPhase={cycleData?.currentPhase} currentDayNum={cycleData?.currentDayNum} cycleLength={cycleData?.cycleLength}/>}
+      {premiumTab==='meals'&&(isPremium?<PremiumMealPlans currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="meals"/>)}
+      {premiumTab==='deep'&&(isPremium?<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={patterns}/></div>:<LockedFeature onUpgrade={onUpgrade} feature="deep"/>)}
+      {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns}/>:<LockedFeature onUpgrade={onUpgrade} feature="surgical"/>)}
+      {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard/>:<LockedFeature onUpgrade={onUpgrade} feature="treatment"/>)}
+      {premiumTab==='viz'&&(isPremium?<PremiumVisualizations patterns={patterns} currentPhase={cycleData?.currentPhase} currentDayNum={cycleData?.currentDayNum} cycleLength={cycleData?.cycleLength}/>:<LockedFeature onUpgrade={onUpgrade} feature="viz"/>)}
     </div>
   )
 }

@@ -8,7 +8,7 @@
 
 import { createServer } from 'http'
 import { createClient } from '@libsql/client'
-import { randomUUID, scryptSync, timingSafeEqual } from 'crypto'
+import { randomUUID, scryptSync, timingSafeEqual, createHmac } from 'crypto'
 import { readFileSync, existsSync } from 'fs'
 import { join, extname } from 'path'
 
@@ -19,6 +19,9 @@ const PORT = process.env.PORT || 3001
 // variables (e.g. in Render's Environment tab, or a local .env for dev).
 if (!process.env.TURSO_DATABASE_URL) {
   console.error('FATAL: TURSO_DATABASE_URL environment variable is not set.')
+}
+if (!process.env.STRIPE_WEBHOOK_SECRET) {
+  console.warn('WARNING: STRIPE_WEBHOOK_SECRET is not set. /api/webhooks/stripe will reject all events until it is configured in Render\'s Environment tab.')
 }
 
 const db = createClient({
@@ -54,6 +57,13 @@ try {
 } catch (e) {
   console.error("Failed to create sessions table:", e.message)
 }
+
+// Premium status columns, set by the Stripe webhook below. SQLite/Turso
+// doesn't support "ADD COLUMN IF NOT EXISTS", so these are wrapped in
+// try/catch and will just no-op with an error once the column already
+// exists on subsequent deploys.
+try { await teamDb("ALTER TABLE users ADD COLUMN is_premium INTEGER DEFAULT 0") } catch (e) {}
+try { await teamDb("ALTER TABLE users ADD COLUMN stripe_customer_id TEXT") } catch (e) {}
 
 // Password hashing with scrypt (salt + hash)
 function hashPassword(password) {
@@ -263,6 +273,104 @@ function serveStatic(req, res, pathname) {
   res.end(readFileSync(filePath))
 }
 
+// ===== STRIPE WEBHOOK =====
+// Reads the exact raw request bytes (not JSON-parsed) because Stripe's
+// signature is computed over the raw payload — re-serializing a parsed
+// JSON object would not reliably reproduce the same bytes and would break
+// verification.
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', chunk => chunks.push(chunk))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
+// Verifies a Stripe webhook signature per Stripe's documented scheme:
+// https://docs.stripe.com/webhooks#verify-manually
+// Header looks like: "t=1614556800,v1=5257a869e7ecebeda32affa62cdca3fa..."
+function verifyStripeSignature(rawBody, sigHeader, secret) {
+  if (!sigHeader || !secret) return false
+  const parts = Object.fromEntries(
+    sigHeader.split(',').map(kv => kv.split('=')).filter(kv => kv.length === 2)
+  )
+  const timestamp = parts.t
+  const signatures = sigHeader.split(',').filter(kv => kv.startsWith('v1=')).map(kv => kv.slice(3))
+  if (!timestamp || signatures.length === 0) return false
+
+  // Reject events older than 5 minutes to guard against replay attacks
+  const age = Math.abs(Date.now() / 1000 - Number(timestamp))
+  if (!isFinite(age) || age > 300) return false
+
+  const expected = createHmac('sha256', secret)
+    .update(`${timestamp}.${rawBody}`, 'utf8')
+    .digest('hex')
+
+  return signatures.some(sig => {
+    try {
+      return sig.length === expected.length &&
+        timingSafeEqual(Buffer.from(sig, 'utf8'), Buffer.from(expected, 'utf8'))
+    } catch {
+      return false
+    }
+  })
+}
+
+async function handleStripeWebhook(req, res) {
+  const rawBody = await readRawBody(req)
+  const signature = req.headers['stripe-signature']
+  const secret = process.env.STRIPE_WEBHOOK_SECRET
+
+  if (!verifyStripeSignature(rawBody, signature, secret)) {
+    console.warn('Stripe webhook: signature verification failed')
+    return json(res, { error: 'Invalid signature' }, 400)
+  }
+
+  let event
+  try {
+    event = JSON.parse(rawBody)
+  } catch {
+    return json(res, { error: 'Invalid payload' }, 400)
+  }
+
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object
+        const userId = session.client_reference_id
+        const customerId = session.customer
+        if (userId && isValidUUID(userId)) {
+          await teamDb(`UPDATE users SET is_premium = 1, stripe_customer_id = ${escapeStr(customerId)} WHERE id = ${escapeStr(userId)}`)
+          console.log(`Stripe webhook: marked user ${userId} as premium`)
+        } else {
+          console.warn('Stripe webhook: checkout.session.completed missing a valid client_reference_id; could not mark a user premium')
+        }
+        break
+      }
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object
+        await teamDb(`UPDATE users SET is_premium = 0 WHERE stripe_customer_id = ${escapeStr(subscription.customer)}`)
+        console.log(`Stripe webhook: revoked premium for customer ${subscription.customer} (subscription canceled)`)
+        break
+      }
+      case 'customer.subscription.updated': {
+        const subscription = event.data.object
+        const active = ['active', 'trialing'].includes(subscription.status)
+        await teamDb(`UPDATE users SET is_premium = ${active ? 1 : 0} WHERE stripe_customer_id = ${escapeStr(subscription.customer)}`)
+        break
+      }
+      default:
+        // Other event types are ignored on purpose
+        break
+    }
+    json(res, { received: true })
+  } catch (err) {
+    console.error('Stripe webhook handling error:', err.message)
+    json(res, { error: 'Webhook handler error' }, 500)
+  }
+}
+
 // Wraps a route handler so a thrown/rejected error inside it results in a
 // 500 response to that one request, instead of an unhandled promise
 // rejection that can crash the entire Node process (taking down every
@@ -300,6 +408,11 @@ const router = {
   'GET /api/health': (req, res) => {
     json(res, { status: 'ok', timestamp: new Date().toISOString() })
   },
+
+  // Stripe calls this directly (not from the browser) when a checkout
+  // completes or a subscription changes. Verified via signature, not auth
+  // headers — see verifyStripeSignature above.
+  'POST /api/webhooks/stripe': handleStripeWebhook,
 
   // ===== USERS =====
   'POST /api/users': async (req, res) => {
