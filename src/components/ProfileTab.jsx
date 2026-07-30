@@ -240,7 +240,7 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
       </div>
 
       {/* Profile Info */}
-      <SectionCard icon="\u{1F464}" title="Profile Info">
+      <SectionCard icon={"\u{1F464}"} title="Profile Info">
         {!editingInfo ? (
           <div className="space-y-3">
             <div>
@@ -280,7 +280,7 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
 
       {/* Cycle Settings — only meaningful for patients */}
       {!isClinician && (
-        <SectionCard icon="\u{1F338}" title="Cycle Settings" subtitle="Used to calculate your current cycle day and phase">
+        <SectionCard icon={"\u{1F338}"} title="Cycle Settings" subtitle="Used to calculate your current cycle day and phase">
           {!editingCycle ? (
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-4">
@@ -332,7 +332,7 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
       )}
 
       {/* Password */}
-      <SectionCard icon="\u{1F512}" title={hasPassword ? 'Password' : 'Set a Password'}
+      <SectionCard icon={"\u{1F512}"} title={hasPassword ? 'Password' : 'Set a Password'}
         subtitle={hasPassword ? 'Change the password used to log in' : (hasEmail ? 'Add a password so you can log in on other devices' : 'Add an email above first, then set a password')}>
         {!editingPassword ? (
           <div className="space-y-3">
@@ -375,7 +375,7 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
 
       {/* Premium status */}
       {!isClinician && (
-        <SectionCard icon="\u2B50" title="Subscription">
+        <SectionCard icon={"\u2B50"} title="Subscription">
           {isPremium ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -404,7 +404,7 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
       )}
 
       {/* Data export */}
-      <SectionCard icon="\u{1F4E5}" title="Your Data" subtitle="Download a copy of your profile info for your own records">
+      <SectionCard icon={"\u{1F4E5}"} title="Your Data" subtitle="Download a copy of your profile info for your own records">
         <button onClick={handleExport} className="btn-secondary min-h-[44px] px-6">Export my data</button>
       </SectionCard>
 
