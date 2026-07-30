@@ -122,10 +122,12 @@ export async function updateUser(userId, data) {
 // changes an existing one. currentPassword can be omitted when setting a
 // password for the first time.
 export async function changePassword(userId, { currentPassword, newPassword }) {
-  return request(`/users/${userId || getUserId()}/password`, {
+  const result = await request(`/users/${userId || getUserId()}/password`, {
     method: 'POST',
     body: JSON.stringify({ currentPassword, newPassword }),
   })
+  if (result.token) setToken(result.token)
+  return result
 }
 
 // Permanently deletes the account and all associated data. `password` is

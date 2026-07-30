@@ -196,7 +196,7 @@ async function getAuthenticatedUserId(req) {
 
 async function verifyUserAuth(req, res, targetUserId) {
   try {
-    const userRows = await teamDb(`SELECT email FROM users WHERE id = ${escapeStr(targetUserId)}`)
+    const userRows = await teamDb(`SELECT password_hash FROM users WHERE id = ${escapeStr(targetUserId)}`)
     if (userRows.length === 0) {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'User not found' }))
@@ -205,8 +205,14 @@ async function verifyUserAuth(req, res, targetUserId) {
     
     const user = userRows[0]
     
-    // If the user has a registered email, they MUST be authenticated via session token matching targetUserId
-    if (user.email) {
+    // Only accounts with an actual password can ever obtain a session
+    // token (via /login or /register, both of which require one). Gating
+    // this on email presence alone — rather than password_hash — used to
+    // lock people out permanently: an account could pick up an email
+    // (e.g. via the optional onboarding field, or editing it in Profile)
+    // without ever getting a password or a token, making it impossible to
+    // pass this check from that point on.
+    if (user.password_hash) {
       const authUserId = await getAuthenticatedUserId(req)
       if (!authUserId) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
@@ -566,7 +572,14 @@ const router = {
     const now = new Date().toISOString()
     const newHash = hashPassword(newPassword)
     await teamDb(`UPDATE users SET password_hash = ${escapeStr(newHash)}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
-    json(res, { success: true })
+
+    // Setting a password now makes this account subject to the Bearer-token
+    // check in verifyUserAuth, so hand back a session token immediately —
+    // mirroring what /register and /login do — instead of leaving the
+    // client to make a request it can no longer pass.
+    const token = generateToken()
+    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(params.id)}, ${escapeStr(now)})`)
+    json(res, { success: true, token })
   },
 
   // Permanently deletes a user's account and all associated data. If the
