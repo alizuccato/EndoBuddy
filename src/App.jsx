@@ -14,7 +14,8 @@ import PhaseAwareHome from './components/PhaseAwareHome'
 import ClinicPortal from './components/ClinicPortal'
 import PremiumUpgradeFlow from './components/PremiumUpgradeFlow'
 import LoginFlow from './components/LoginFlow'
-import { getUserId, getUser, getLogs, saveDailyLog, completeOnboarding, getPatterns } from './services/dbService'
+import ProfileTab from './components/ProfileTab'
+import { getUserId, getUser, getLogs, saveDailyLog, completeOnboarding, getPatterns, logoutUser } from './services/dbService'
 import { getLocalDateString, getDayOfCycle } from './utils/dateHelpers'
 
 function App() {
@@ -157,6 +158,18 @@ function App() {
   }, [])
 
   const handleOnboardingSkip = useCallback(() => setShowOnboarding(false), [])
+  const handleLogout = useCallback(() => {
+    logoutUser()
+    setUserId(null)
+    setUserRole(null)
+    setUserProfile(null)
+    setIsPremium(false)
+    setRecentLogs([])
+    setTodayLogged(false)
+    setPatterns([])
+    setCurrentView('home')
+    setShowLogin(true)
+  }, [])
   const handleComfortToggle = useCallback(() => { setComfortModeActive(prev => !prev); setShowComfortPrompt(false) }, [])
   const handleStartUpgrade = useCallback(() => setShowPremiumUpgrade(true), [])
   const handleUpgradeComplete = useCallback(() => { setIsPremium(true); setShowPremiumUpgrade(false) }, [])
@@ -220,10 +233,12 @@ function App() {
     { id: 'insights', label: 'Insights', icon: '\u{1F4CA}' },
     { id: 'reports', label: 'Reports', icon: '\u{1F4CB}' },
     { id: 'premium', label: 'Premium', icon: '\u{2B50}' },
+    { id: 'profile', label: 'Profile', icon: '\u{1F464}' },
   ]
   const clinicianNavItems = [
     { id: 'clinic', label: 'Clinic', icon: '\u{1F3E5}' },
     { id: 'reports', label: 'Reports', icon: '\u{1F4CB}' },
+    { id: 'profile', label: 'Profile', icon: '\u{1F464}' },
   ]
 
   if (!onboardingChecked) {
@@ -265,12 +280,14 @@ function App() {
                   <NavBtn currentView={currentView} view="insights" onClick={() => { setCurrentView('insights'); setShowLoggingFlow(false) }}>Insights</NavBtn>
                   <NavBtn currentView={currentView} view="reports" onClick={() => { setCurrentView('reports'); setShowLoggingFlow(false) }}>Reports</NavBtn>
                   <NavBtn currentView={currentView} view="premium" onClick={() => { setCurrentView('premium'); setShowLoggingFlow(false) }}><span className="text-xs">{'\u{2B50}'}</span> Premium</NavBtn>
+                  <NavBtn currentView={currentView} view="profile" onClick={() => { setCurrentView('profile'); setShowLoggingFlow(false) }}>{'\u{1F464}'} Profile</NavBtn>
                 </>
               )}
               {isClinician && (
                 <>
                   <NavBtn currentView={currentView} view="clinic" onClick={() => { setCurrentView('clinic'); setShowLoggingFlow(false) }}>{'\u{1F3E5}'} Clinic Portal</NavBtn>
                   <NavBtn currentView={currentView} view="reports" onClick={() => { setCurrentView('reports'); setShowLoggingFlow(false) }}>{'\u{1F4CB}'} Reports</NavBtn>
+                  <NavBtn currentView={currentView} view="profile" onClick={() => { setCurrentView('profile'); setShowLoggingFlow(false) }}>{'\u{1F464}'} Profile</NavBtn>
                 </>
               )}
             </nav>
@@ -298,6 +315,17 @@ function App() {
           {isPatient && !showLoggingFlow && currentView==='insights' && <InsightsDashboard cycleData={cycleData} insights={patterns} />}
           {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} cycleData={cycleData} patterns={patterns} />}
           {currentView==='reports' && <ReportsView recentLogs={recentLogs} cycleData={cycleData} patterns={patterns} />}
+          {currentView==='profile' && (
+            <ProfileTab
+              userId={userId}
+              userProfile={userProfile}
+              isPremium={isPremium}
+              userRole={userRole}
+              onUpgrade={handleStartUpgrade}
+              onLogout={handleLogout}
+              onProfileUpdate={setUserProfile}
+            />
+          )}
           {isClinician && currentView==='clinic' && <ClinicPortal />}
           {!showLoggingFlow && currentView==='home' && isClinician && (
             <div className="max-w-lg mx-auto px-6 py-12 text-center">

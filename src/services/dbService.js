@@ -89,6 +89,15 @@ export async function loginUser(email, password) {
   return user
 }
 
+// Opens Stripe's hosted Billing Portal so the user can update payment
+// details, view invoices, or cancel their subscription themselves.
+export async function createBillingPortalSession(userId, returnUrl) {
+  return request(`/users/${userId || getUserId()}/billing-portal`, {
+    method: 'POST',
+    body: JSON.stringify({ returnUrl: returnUrl || window.location.origin + '/' }),
+  })
+}
+
 export function logoutUser() {
   clearToken()
   localStorage.removeItem('endobuddy_user_id')
@@ -107,6 +116,28 @@ export async function updateUser(userId, data) {
     method: 'PUT',
     body: JSON.stringify(data),
   })
+}
+
+// Sets a password (if the account has none yet, e.g. anonymous signup) or
+// changes an existing one. currentPassword can be omitted when setting a
+// password for the first time.
+export async function changePassword(userId, { currentPassword, newPassword }) {
+  return request(`/users/${userId || getUserId()}/password`, {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
+}
+
+// Permanently deletes the account and all associated data. `password` is
+// required only if the account has a password set.
+export async function deleteAccount(userId, password) {
+  const result = await request(`/users/${userId || getUserId()}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  })
+  clearToken()
+  localStorage.removeItem('endobuddy_user_id')
+  return result
 }
 
 // ============================================================

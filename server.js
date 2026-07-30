@@ -23,6 +23,9 @@ if (!process.env.TURSO_DATABASE_URL) {
 if (!process.env.STRIPE_WEBHOOK_SECRET) {
   console.warn('WARNING: STRIPE_WEBHOOK_SECRET is not set. /api/webhooks/stripe will reject all events until it is configured in Render\'s Environment tab.')
 }
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.warn('WARNING: STRIPE_SECRET_KEY is not set. The "Manage subscription" billing portal link will not work until it is configured in Render\'s Environment tab.')
+}
 
 const db = createClient({
   url: process.env.TURSO_DATABASE_URL,
@@ -414,6 +417,50 @@ const router = {
   // headers — see verifyStripeSignature above.
   'POST /api/webhooks/stripe': handleStripeWebhook,
 
+  // Creates a Stripe-hosted Billing Portal session so a premium user can
+  // view invoices, update their card, or cancel their subscription
+  // themselves — without us building any of that UI. Calls Stripe's REST
+  // API directly (no SDK) since the rest of this server already talks to
+  // Stripe that way (see verifyStripeSignature above).
+  'POST /api/users/:id/billing-portal': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.id))) return
+
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return json(res, { error: 'Billing management is not configured yet. Please contact support.' }, 503)
+    }
+
+    const rows = await teamDb(`SELECT stripe_customer_id FROM users WHERE id = ${escapeStr(params.id)}`)
+    if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+    const customerId = rows[0].stripe_customer_id
+    if (!customerId) return json(res, { error: 'No active subscription found for this account' }, 400)
+
+    const body = await parseBody(req)
+    const returnUrl = typeof body.returnUrl === 'string' && body.returnUrl.startsWith('https://')
+      ? body.returnUrl
+      : 'https://myendobuddy.com/'
+
+    try {
+      const stripeRes = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ customer: customerId, return_url: returnUrl }),
+      })
+      const data = await stripeRes.json()
+      if (!stripeRes.ok) {
+        console.error('Stripe billing portal error:', data.error?.message)
+        return json(res, { error: 'Could not open billing portal. Please try again shortly.' }, 502)
+      }
+      json(res, { url: data.url })
+    } catch (err) {
+      console.error('Stripe billing portal request failed:', err.message)
+      json(res, { error: 'Could not reach Stripe. Please try again shortly.' }, 502)
+    }
+  },
+
   // ===== USERS =====
   'POST /api/users': async (req, res) => {
     const body = await parseBody(req)
@@ -440,7 +487,10 @@ const router = {
     
     const rows = await teamDb(`SELECT * FROM users WHERE id = ${escapeStr(params.id)}`)
     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
-    json(res, rows[0])
+    // Never send the password hash itself to the client — expose only
+    // whether one is set, so the UI can decide which password form to show.
+    const { password_hash, ...safeUser } = rows[0]
+    json(res, { ...safeUser, has_password: !!password_hash })
   },
 
   'PUT /api/users/:id': async (req, res, params) => {
@@ -456,6 +506,7 @@ const router = {
       dateOfBirth: 'date_of_birth',
       timezone: 'timezone',
       cycleLength: 'cycle_length_avg',
+      periodLength: 'period_length_avg',
       lastPeriodStart: 'last_period_start',
       onboardingComplete: 'onboarding_complete',
       clinicName: 'clinic_name',
@@ -471,7 +522,7 @@ const router = {
           val = isValidDate(val) ? escapeStr(val) : 'NULL'
         } else if (typeof val === 'string') {
           val = escapeStr(val)
-        } else if (field === 'cycleLength' || field === 'onboardingComplete') {
+        } else if (field === 'cycleLength' || field === 'periodLength' || field === 'onboardingComplete') {
           val = isValidNumber(val) ? Number(val) : 'NULL'
         } else {
           val = 'NULL'
@@ -483,6 +534,77 @@ const router = {
     if (updates.length === 0) return json(res, { error: 'No valid fields to update' }, 400)
     await teamDb(`UPDATE users SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
     json(res, { id: params.id, updated: true })
+  },
+
+  // Set or change a user's password from the Profile tab. If the account
+  // doesn't have a password yet (a quick anonymous signup), currentPassword
+  // isn't required — but an email must already be on file, since a
+  // password only makes sense paired with a way to log back in with it.
+  // If a password already exists, the current one must be verified first.
+  'POST /api/users/:id/password': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.id))) return
+
+    const body = await parseBody(req)
+    const { currentPassword, newPassword } = body
+    if (!newPassword || newPassword.length < 6) {
+      return json(res, { error: 'New password must be at least 6 characters' }, 400)
+    }
+
+    const rows = await teamDb(`SELECT email, password_hash FROM users WHERE id = ${escapeStr(params.id)}`)
+    if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+    const user = rows[0]
+
+    if (user.password_hash) {
+      if (!currentPassword || !verifyPassword(currentPassword, user.password_hash)) {
+        return json(res, { error: 'Current password is incorrect' }, 401)
+      }
+    } else if (!user.email) {
+      return json(res, { error: 'Add an email to your profile before setting a password' }, 400)
+    }
+
+    const now = new Date().toISOString()
+    const newHash = hashPassword(newPassword)
+    await teamDb(`UPDATE users SET password_hash = ${escapeStr(newHash)}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
+    json(res, { success: true })
+  },
+
+  // Permanently deletes a user's account and all associated data. If the
+  // account has a password set, it must be confirmed in the request body
+  // as an extra safety check before anything is deleted.
+  'DELETE /api/users/:id': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.id))) return
+
+    const rows = await teamDb(`SELECT password_hash FROM users WHERE id = ${escapeStr(params.id)}`)
+    if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+    const user = rows[0]
+
+    if (user.password_hash) {
+      const body = await parseBody(req)
+      if (!body.password || !verifyPassword(body.password, user.password_hash)) {
+        return json(res, { error: 'Password is incorrect' }, 401)
+      }
+    }
+
+    const logRows = await teamDb(`SELECT id FROM daily_logs WHERE user_id = ${escapeStr(params.id)}`)
+    const logIds = logRows.map(r => escapeStr(r.id))
+    if (logIds.length > 0) {
+      const inClause = `(${logIds.join(',')})`
+      await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id IN ${inClause}`)
+      await teamDb(`DELETE FROM pain_entries WHERE daily_log_id IN ${inClause}`)
+      await teamDb(`DELETE FROM food_entries WHERE daily_log_id IN ${inClause}`)
+      await teamDb(`DELETE FROM stress_mood_entries WHERE daily_log_id IN ${inClause}`)
+      await teamDb(`DELETE FROM medication_entries WHERE daily_log_id IN ${inClause}`)
+    }
+    await teamDb(`DELETE FROM daily_logs WHERE user_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM cycles WHERE user_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM pattern_insights WHERE user_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM doctor_reports WHERE user_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM sessions WHERE user_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM users WHERE id = ${escapeStr(params.id)}`)
+
+    json(res, { success: true, deleted: true })
   },
 
   // ===== DAILY LOGS =====
