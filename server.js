@@ -95,6 +95,27 @@ try {
   console.error('Failed to create clinic_invitations table:', e.message)
 }
 
+// doctor_reports is referenced elsewhere in this file (account deletion,
+// clinic patient roster) but historically had no CREATE statement anywhere
+// in server.js — only in the 001 migration file that never actually runs
+// against prod (see the period_length_avg comment above). If it didn't
+// already exist in the live DB, any query against it would throw. Created
+// here defensively so those queries succeed regardless of DB history.
+try {
+  await teamDb(`CREATE TABLE IF NOT EXISTS doctor_reports (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    report_type TEXT NOT NULL,
+    report_data TEXT NOT NULL,
+    generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    shared_count INTEGER DEFAULT 0
+  )`)
+} catch (e) {
+  console.error('Failed to create doctor_reports table:', e.message)
+}
+
 // Password hashing with scrypt (salt + hash)
 function hashPassword(password) {
   const salt = randomUUID().slice(0, 16)
@@ -1240,18 +1261,31 @@ const router = {
 
     const results = []
     for (const p of patientRows) {
-      const lastLog = await teamDb(`SELECT log_date, cycle_phase FROM daily_logs WHERE user_id = ${escapeStr(p.id)} ORDER BY log_date DESC LIMIT 1`)
-      const logCount = await teamDb(`SELECT COUNT(*) as c FROM daily_logs WHERE user_id = ${escapeStr(p.id)}`)
-      const reportRows = await teamDb(`SELECT id, report_type, generated_at FROM doctor_reports WHERE user_id = ${escapeStr(p.id)} ORDER BY generated_at DESC`)
-      results.push({
-        id: p.id,
-        name: p.display_name || 'Unnamed patient',
-        linkedSince: p.created_at,
-        lastLogDate: lastLog[0]?.log_date || null,
-        phase: lastLog[0]?.cycle_phase || null,
-        totalLogs: Number(logCount[0]?.c || 0),
-        reports: reportRows.map(r => ({ id: r.id, type: r.report_type, generatedAt: r.generated_at })),
-      })
+      try {
+        const lastLog = await teamDb(`SELECT log_date, cycle_phase FROM daily_logs WHERE user_id = ${escapeStr(p.id)} ORDER BY log_date DESC LIMIT 1`)
+        const logCount = await teamDb(`SELECT COUNT(*) as c FROM daily_logs WHERE user_id = ${escapeStr(p.id)}`)
+        const reportRows = await teamDb(`SELECT id, report_type, generated_at FROM doctor_reports WHERE user_id = ${escapeStr(p.id)} ORDER BY generated_at DESC`)
+        results.push({
+          id: p.id,
+          name: p.display_name || 'Unnamed patient',
+          linkedSince: p.created_at,
+          lastLogDate: lastLog[0]?.log_date || null,
+          phase: lastLog[0]?.cycle_phase || null,
+          totalLogs: Number(logCount[0]?.c || 0),
+          reports: reportRows.map(r => ({ id: r.id, type: r.report_type, generatedAt: r.generated_at })),
+        })
+      } catch (e) {
+        console.error(`Failed to load roster data for patient ${p.id}:`, e.message)
+        results.push({
+          id: p.id,
+          name: p.display_name || 'Unnamed patient',
+          linkedSince: p.created_at,
+          lastLogDate: null,
+          phase: null,
+          totalLogs: 0,
+          reports: [],
+        })
+      }
     }
     json(res, results)
   },
