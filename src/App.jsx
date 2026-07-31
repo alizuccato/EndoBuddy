@@ -84,13 +84,15 @@ function App() {
     async function checkUser() {
       const existingUserId = getUserId()
       const user = await getUser(existingUserId)
-      if (user && user.onboarding_complete) {
+      const isReturningClinician = user && user.role === 'clinician'
+      if (user && (user.onboarding_complete || isReturningClinician)) {
         setUserId(user.id)
         setUserProfile(user)
         setUserRole(user.role || 'patient')
         setIsPremium(prev => prev || user.is_premium === 1 || user.is_premium === true)
         setShowLogin(false)
         setShowOnboarding(false)
+        if (isReturningClinician) setCurrentView('clinic')
         try {
           const logs = await getLogs(user.id)
           if (logs && logs.length > 0) {
