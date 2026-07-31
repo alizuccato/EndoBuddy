@@ -68,6 +68,14 @@ try {
 try { await teamDb("ALTER TABLE users ADD COLUMN is_premium INTEGER DEFAULT 0") } catch (e) {}
 try { await teamDb("ALTER TABLE users ADD COLUMN stripe_customer_id TEXT") } catch (e) {}
 
+// period_length_avg has been in 001_initial_schema.sql since the very first
+// commit, but that migration file is never actually run against the live
+// Turso database (runMigrations() in src/db/migrate.js is defined but never
+// called anywhere in this server). The production `users` table was created
+// before this column existed, so it's missing in prod even though it's in
+// the schema file. Add it the same defensive way as the two columns above.
+try { await teamDb("ALTER TABLE users ADD COLUMN period_length_avg INTEGER") } catch (e) {}
+
 // Password hashing with scrypt (salt + hash)
 function hashPassword(password) {
   const salt = randomUUID().slice(0, 16)
