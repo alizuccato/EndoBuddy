@@ -266,4 +266,13 @@ export async function acceptClinicInvitation(patientId, code) {
   })
 }
 
+// Lets a patient unlink their account from whichever clinician they're
+// currently connected to.
+export async function disconnectFromClinic(patientId) {
+  return request('/clinic/disconnect', {
+    method: 'POST',
+    body: JSON.stringify({ patientId: patientId || getUserId() }),
+  })
+}
+
 export { getUserId }

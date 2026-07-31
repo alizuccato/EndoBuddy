@@ -1247,6 +1247,21 @@ const router = {
     json(res, { success: true, clinicianId: invite.clinician_id, accessLevel: invite.access_level })
   },
 
+  // A patient unlinks their own account from whichever clinician they're
+  // currently connected to. Deliberately doesn't touch the historical
+  // clinic_invitations row (status stays 'accepted') — that's an audit
+  // trail of the invite, not a live connection flag; users.clinician_id
+  // is the actual source of truth for "who can currently see this data."
+  'POST /api/clinic/disconnect': async (req, res) => {
+    const body = await parseBody(req)
+    if (!isValidUUID(body.patientId)) return json(res, { error: 'Invalid or missing patient ID' }, 400)
+    if (!(await verifyUserAuth(req, res, body.patientId))) return
+
+    const now = new Date().toISOString()
+    await teamDb(`UPDATE users SET clinician_id = NULL, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(body.patientId)}`)
+    json(res, { success: true })
+  },
+
   // ===== CLINIC: PATIENT ROSTER =====
   // Real linked patients for a clinician's dashboard, replacing the mock
   // patient list. Deliberately returns only the summary fields a roster

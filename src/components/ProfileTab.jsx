@@ -10,7 +10,7 @@
  * endpoints the rest of the app already uses.
  */
 import { useState, useCallback } from 'react'
-import { updateUser, changePassword, deleteAccount, logoutUser, createBillingPortalSession, acceptClinicInvitation } from '../services/dbService'
+import { updateUser, changePassword, deleteAccount, logoutUser, createBillingPortalSession, acceptClinicInvitation, disconnectFromClinic } from '../services/dbService'
 
 function formatMemberSince(isoString) {
   if (!isoString) return null
@@ -111,12 +111,12 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
     }
   }, [userId, lastPeriodStart, periodLength, cycleLength, userProfile, onProfileUpdate])
 
-  // ---- Password ----
   // ---- Clinic connection (patients only) ----
   const [clinicCode, setClinicCode] = useState('')
   const [connectingClinic, setConnectingClinic] = useState(false)
   const [clinicConnectError, setClinicConnectError] = useState('')
   const [clinicConnectSuccess, setClinicConnectSuccess] = useState(false)
+  const [disconnectingClinic, setDisconnectingClinic] = useState(false)
 
   const handleConnectClinic = useCallback(async () => {
     if (!clinicCode.trim()) return
@@ -134,6 +134,20 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
       setConnectingClinic(false)
     }
   }, [clinicCode, userId, userProfile, onProfileUpdate])
+
+  const handleDisconnectClinic = useCallback(async () => {
+    setDisconnectingClinic(true)
+    setClinicConnectError('')
+    try {
+      await disconnectFromClinic(userId)
+      setClinicConnectSuccess(false)
+      onProfileUpdate?.({ ...userProfile, clinician_id: null })
+    } catch (e) {
+      setClinicConnectError(e.message || 'Could not disconnect. Try again.')
+    } finally {
+      setDisconnectingClinic(false)
+    }
+  }, [userId, userProfile, onProfileUpdate])
 
   const hasPassword = !!userProfile?.has_password
   const hasEmail = !!userProfile?.email
@@ -359,7 +373,13 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
       {!isClinician && (
         <SectionCard icon={"\u{1F3E5}"} title="Clinic Connection" subtitle="Enter a code from your care team to share your tracking data with them">
           {userProfile?.clinician_id ? (
-            <p className="text-sm text-green-600">✅ Your account is linked to a clinic.</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-green-600">✅ Your account is linked to a clinic.</p>
+              <button onClick={handleDisconnectClinic} disabled={disconnectingClinic}
+                className="text-xs font-medium text-gray-500 hover:text-red-600 disabled:opacity-50">
+                {disconnectingClinic ? 'Disconnecting…' : 'Disconnect'}
+              </button>
+            </div>
           ) : (
             <div className="flex gap-2">
               <input value={clinicCode} onChange={e => setClinicCode(e.target.value)}
