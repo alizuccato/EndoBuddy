@@ -10,7 +10,7 @@
  * endpoints the rest of the app already uses.
  */
 import { useState, useCallback } from 'react'
-import { updateUser, changePassword, deleteAccount, logoutUser, createBillingPortalSession } from '../services/dbService'
+import { updateUser, changePassword, deleteAccount, logoutUser, createBillingPortalSession, acceptClinicInvitation } from '../services/dbService'
 
 function formatMemberSince(isoString) {
   if (!isoString) return null
@@ -112,6 +112,29 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
   }, [userId, lastPeriodStart, periodLength, cycleLength, userProfile, onProfileUpdate])
 
   // ---- Password ----
+  // ---- Clinic connection (patients only) ----
+  const [clinicCode, setClinicCode] = useState('')
+  const [connectingClinic, setConnectingClinic] = useState(false)
+  const [clinicConnectError, setClinicConnectError] = useState('')
+  const [clinicConnectSuccess, setClinicConnectSuccess] = useState(false)
+
+  const handleConnectClinic = useCallback(async () => {
+    if (!clinicCode.trim()) return
+    setConnectingClinic(true)
+    setClinicConnectError('')
+    setClinicConnectSuccess(false)
+    try {
+      const result = await acceptClinicInvitation(userId, clinicCode.trim())
+      setClinicConnectSuccess(true)
+      setClinicCode('')
+      onProfileUpdate?.({ ...userProfile, clinician_id: result.clinicianId })
+    } catch (e) {
+      setClinicConnectError(e.message || 'Could not connect. Double-check the code and try again.')
+    } finally {
+      setConnectingClinic(false)
+    }
+  }, [clinicCode, userId, userProfile, onProfileUpdate])
+
   const hasPassword = !!userProfile?.has_password
   const hasEmail = !!userProfile?.email
   const [editingPassword, setEditingPassword] = useState(false)
@@ -328,6 +351,28 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
               </div>
             </div>
           )}
+        </SectionCard>
+      )}
+
+      {/* Clinic Connection — lets a patient link their account using a
+          code their clinician generated in the Clinic Portal */}
+      {!isClinician && (
+        <SectionCard icon={"\u{1F3E5}"} title="Clinic Connection" subtitle="Enter a code from your care team to share your tracking data with them">
+          {userProfile?.clinician_id ? (
+            <p className="text-sm text-green-600">✅ Your account is linked to a clinic.</p>
+          ) : (
+            <div className="flex gap-2">
+              <input value={clinicCode} onChange={e => setClinicCode(e.target.value)}
+                className="flex-1 text-sm px-3 py-2 rounded-lg border border-gray-200 focus:border-endo-purple outline-none"
+                placeholder="e.g. EB-X7K9M2" />
+              <button onClick={handleConnectClinic} disabled={connectingClinic || !clinicCode.trim()}
+                className="text-sm font-medium bg-endo-purple text-white px-4 py-2 rounded-lg hover:bg-purple-700 disabled:opacity-50 min-h-[44px]">
+                {connectingClinic ? 'Connecting…' : 'Connect'}
+              </button>
+            </div>
+          )}
+          {clinicConnectError && <p className="text-xs text-red-500 mt-2">{clinicConnectError}</p>}
+          {clinicConnectSuccess && <p className="text-xs text-green-600 mt-2">Connected! Your care team can now see your tracking data.</p>}
         </SectionCard>
       )}
 

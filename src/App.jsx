@@ -326,7 +326,7 @@ function App() {
               onProfileUpdate={setUserProfile}
             />
           )}
-          {isClinician && currentView==='clinic' && <ClinicPortal />}
+          {isClinician && currentView==='clinic' && <ClinicPortal clinician={userProfile} />}
           {!showLoggingFlow && currentView==='home' && isClinician && (
             <div className="max-w-lg mx-auto px-6 py-12 text-center">
               <p className="text-gray-500">Welcome to the Clinician Portal</p>

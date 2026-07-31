@@ -76,6 +76,25 @@ try { await teamDb("ALTER TABLE users ADD COLUMN stripe_customer_id TEXT") } cat
 // the schema file. Add it the same defensive way as the two columns above.
 try { await teamDb("ALTER TABLE users ADD COLUMN period_length_avg INTEGER") } catch (e) {}
 
+// Clinic <-> Patient linking (see src/db/003_add_clinic_linking.sql — same
+// story as above: that migration file isn't actually run against prod, so
+// the columns/tables it defines are created here defensively instead.)
+try { await teamDb("ALTER TABLE users ADD COLUMN clinician_id TEXT") } catch (e) {}
+try {
+  await teamDb(`CREATE TABLE IF NOT EXISTS clinic_invitations (
+    id TEXT PRIMARY KEY,
+    clinician_id TEXT NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    access_level TEXT NOT NULL DEFAULT 'standard',
+    status TEXT NOT NULL DEFAULT 'pending',
+    patient_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    accepted_at TEXT
+  )`)
+} catch (e) {
+  console.error('Failed to create clinic_invitations table:', e.message)
+}
+
 // Password hashing with scrypt (salt + hash)
 function hashPassword(password) {
   const salt = randomUUID().slice(0, 16)
@@ -1150,6 +1169,91 @@ const router = {
       onboardingComplete: user.onboarding_complete === 1,
       token,
     })
+  },
+
+  // ===== CLINIC: INVITATIONS =====
+  // A clinician generates a short code; a patient later redeems it to link
+  // their account. Both directions are auth-checked against the session
+  // token so one clinician can't see or revoke another's invitations, and
+  // a patient can't be linked to a clinic without submitting their own
+  // credentials.
+  'POST /api/clinic/:clinicianId/invitations': async (req, res, params) => {
+    if (!isValidUUID(params.clinicianId)) return json(res, { error: 'Invalid clinician ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.clinicianId))) return
+
+    const clinicianRows = await teamDb(`SELECT role FROM users WHERE id = ${escapeStr(params.clinicianId)}`)
+    if (clinicianRows.length === 0) return json(res, { error: 'Clinician not found' }, 404)
+    if (clinicianRows[0].role !== 'clinician') return json(res, { error: 'Only clinician accounts can generate invitations' }, 403)
+
+    const body = await parseBody(req)
+    const accessLevel = ['standard', 'advanced'].includes(body.accessLevel) ? body.accessLevel : 'standard'
+    const id = randomUUID()
+    const code = 'EB-' + randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()
+    const now = new Date().toISOString()
+
+    await teamDb(`INSERT INTO clinic_invitations (id, clinician_id, code, access_level, status, created_at) VALUES (${escapeStr(id)}, ${escapeStr(params.clinicianId)}, ${escapeStr(code)}, ${escapeStr(accessLevel)}, 'pending', ${escapeStr(now)})`)
+    json(res, { id, code, accessLevel, status: 'pending', createdAt: now }, 201)
+  },
+
+  'GET /api/clinic/:clinicianId/invitations': async (req, res, params) => {
+    if (!isValidUUID(params.clinicianId)) return json(res, { error: 'Invalid clinician ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.clinicianId))) return
+
+    const rows = await teamDb(`SELECT ci.id, ci.code, ci.access_level, ci.status, ci.created_at, ci.accepted_at, u.display_name AS patient_name
+      FROM clinic_invitations ci LEFT JOIN users u ON u.id = ci.patient_id
+      WHERE ci.clinician_id = ${escapeStr(params.clinicianId)} ORDER BY ci.created_at DESC`)
+    json(res, rows)
+  },
+
+  // A patient redeems a clinic's invite code from their own account. This
+  // links users.clinician_id and marks the invitation accepted; it does not
+  // require the clinician's session, only the redeeming patient's own.
+  'POST /api/clinic/invitations/accept': async (req, res) => {
+    const body = await parseBody(req)
+    if (!isValidUUID(body.patientId)) return json(res, { error: 'Invalid or missing patient ID' }, 400)
+    if (!(await verifyUserAuth(req, res, body.patientId))) return
+    if (!body.code || typeof body.code !== 'string') return json(res, { error: 'Invite code is required' }, 400)
+
+    const normalizedCode = body.code.trim().toUpperCase()
+    const inviteRows = await teamDb(`SELECT * FROM clinic_invitations WHERE code = ${escapeStr(normalizedCode)}`)
+    if (inviteRows.length === 0) return json(res, { error: 'Invite code not found' }, 404)
+    const invite = inviteRows[0]
+    if (invite.status !== 'pending') return json(res, { error: 'This invite code has already been used or revoked' }, 409)
+
+    const now = new Date().toISOString()
+    await teamDb(`UPDATE clinic_invitations SET status = 'accepted', patient_id = ${escapeStr(body.patientId)}, accepted_at = ${escapeStr(now)} WHERE id = ${escapeStr(invite.id)}`)
+    await teamDb(`UPDATE users SET clinician_id = ${escapeStr(invite.clinician_id)}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(body.patientId)}`)
+    json(res, { success: true, clinicianId: invite.clinician_id, accessLevel: invite.access_level })
+  },
+
+  // ===== CLINIC: PATIENT ROSTER =====
+  // Real linked patients for a clinician's dashboard, replacing the mock
+  // patient list. Deliberately returns only the summary fields a roster
+  // view needs (last log date, latest cycle phase, tracking duration) —
+  // not full symptom/pain detail, which stays behind the per-patient view.
+  'GET /api/clinic/:clinicianId/patients': async (req, res, params) => {
+    if (!isValidUUID(params.clinicianId)) return json(res, { error: 'Invalid clinician ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.clinicianId))) return
+
+    const patientRows = await teamDb(`SELECT id, display_name, created_at FROM users WHERE clinician_id = ${escapeStr(params.clinicianId)}`)
+    if (patientRows.length === 0) return json(res, [])
+
+    const results = []
+    for (const p of patientRows) {
+      const lastLog = await teamDb(`SELECT log_date, cycle_phase FROM daily_logs WHERE user_id = ${escapeStr(p.id)} ORDER BY log_date DESC LIMIT 1`)
+      const logCount = await teamDb(`SELECT COUNT(*) as c FROM daily_logs WHERE user_id = ${escapeStr(p.id)}`)
+      const reportRows = await teamDb(`SELECT id, report_type, generated_at FROM doctor_reports WHERE user_id = ${escapeStr(p.id)} ORDER BY generated_at DESC`)
+      results.push({
+        id: p.id,
+        name: p.display_name || 'Unnamed patient',
+        linkedSince: p.created_at,
+        lastLogDate: lastLog[0]?.log_date || null,
+        phase: lastLog[0]?.cycle_phase || null,
+        totalLogs: Number(logCount[0]?.c || 0),
+        reports: reportRows.map(r => ({ id: r.id, type: r.report_type, generatedAt: r.generated_at })),
+      })
+    }
+    json(res, results)
   },
 
   'GET /api/me/:userId': async (req, res, params) => {

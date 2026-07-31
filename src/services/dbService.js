@@ -238,4 +238,32 @@ export async function completeOnboarding(onboardingData) {
   return user
 }
 
+// ============================================================
+// Clinic API
+// ============================================================
+
+export async function generateClinicInvitation(clinicianId, accessLevel = 'standard') {
+  return request(`/clinic/${clinicianId}/invitations`, {
+    method: 'POST',
+    body: JSON.stringify({ accessLevel }),
+  })
+}
+
+export async function getClinicInvitations(clinicianId) {
+  return request(`/clinic/${clinicianId}/invitations`)
+}
+
+export async function getClinicPatients(clinicianId) {
+  return request(`/clinic/${clinicianId}/patients`)
+}
+
+// Called from the patient's Profile tab to link their account to a
+// clinician using a code the clinician generated in their Clinic Portal.
+export async function acceptClinicInvitation(patientId, code) {
+  return request('/clinic/invitations/accept', {
+    method: 'POST',
+    body: JSON.stringify({ patientId: patientId || getUserId(), code }),
+  })
+}
+
 export { getUserId }
