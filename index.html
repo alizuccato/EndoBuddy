@@ -3,6 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo-icon.png" />
+
+    <!-- iOS: icon + standalone (no browser chrome) when added to Home Screen -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="EndoBuddy" />
+
+    <!-- Android / Chrome: manifest drives icon, name, standalone display -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#7c3aed" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EndoBuddy — Your Cycle & Symptom Companion</title>
     <meta name="description" content="AI-driven symptom and cycle tracking for endometriosis and cycle-linked chronic illnesses." />
