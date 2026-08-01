@@ -1,0 +1,12 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index c022726..2ab4d6c 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -129,6 +129,7 @@ function App() {
+       const fullUser = await getUser(userData.id)
+       if (fullUser) {
+         setUserProfile(fullUser)
++        setIsPremium(fullUser.is_premium === 1 || fullUser.is_premium === true)
+         onboardingDone = fullUser.onboarding_complete === 1 || fullUser.onboarding_complete === true
+       } else {
+         setUserProfile(userData)

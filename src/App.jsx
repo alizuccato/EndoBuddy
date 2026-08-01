@@ -129,6 +129,7 @@ function App() {
       const fullUser = await getUser(userData.id)
       if (fullUser) {
         setUserProfile(fullUser)
+        setIsPremium(fullUser.is_premium === 1 || fullUser.is_premium === true)
         onboardingDone = fullUser.onboarding_complete === 1 || fullUser.onboarding_complete === true
       } else {
         setUserProfile(userData)
