@@ -137,9 +137,11 @@ function App() {
     } catch {
       setUserProfile(userData)
     }
+    refreshLogs(userData.id)
+    refreshPatterns(userData.id)
     if (userData.role === 'clinician') { setShowOnboarding(false); setCurrentView('clinic') }
     else { setShowOnboarding(!onboardingDone); setCurrentView('home') }
-  }, [])
+  }, [refreshLogs, refreshPatterns])
 
   const handleLoginSkip = useCallback(() => {
     setShowLogin(false); setUserRole('patient'); setShowOnboarding(true); setCurrentView('home')
