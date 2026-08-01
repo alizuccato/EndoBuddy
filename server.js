@@ -151,6 +151,21 @@ function escapeStr(str) {
   if (str == null) return 'NULL'
   return "'" + String(str).replace(/'/g, "''") + "'"
 }
+// Some tables from 001_initial_schema.sql (pain_entries, food_entries,
+// stress_mood_entries, medication_entries, pattern_insights) were never
+// actually created against production — see the migration-drift notes
+// elsewhere in this file. Nothing in this server ever INSERTs into them,
+// so a plain teamDb() DELETE against them throws "no such table" and
+// takes down the whole request. This swallows exactly that failure so
+// cleanup of tables that DO exist (daily_logs, symptom_entries, etc.)
+// still completes, while genuine DB errors still surface normally.
+async function safeDeleteFrom(sql) {
+  try {
+    await teamDb(sql)
+  } catch (err) {
+    if (!/no such table/i.test(err.message)) throw err
+  }
+}
 function isValidDate(str) {
   if (!str || typeof str !== 'string') return false
   return /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(Date.parse(str))
@@ -653,14 +668,14 @@ const router = {
     if (logIds.length > 0) {
       const inClause = `(${logIds.join(',')})`
       await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id IN ${inClause}`)
-      await teamDb(`DELETE FROM pain_entries WHERE daily_log_id IN ${inClause}`)
-      await teamDb(`DELETE FROM food_entries WHERE daily_log_id IN ${inClause}`)
-      await teamDb(`DELETE FROM stress_mood_entries WHERE daily_log_id IN ${inClause}`)
-      await teamDb(`DELETE FROM medication_entries WHERE daily_log_id IN ${inClause}`)
+      await safeDeleteFrom(`DELETE FROM pain_entries WHERE daily_log_id IN ${inClause}`)
+      await safeDeleteFrom(`DELETE FROM food_entries WHERE daily_log_id IN ${inClause}`)
+      await safeDeleteFrom(`DELETE FROM stress_mood_entries WHERE daily_log_id IN ${inClause}`)
+      await safeDeleteFrom(`DELETE FROM medication_entries WHERE daily_log_id IN ${inClause}`)
     }
     await teamDb(`DELETE FROM daily_logs WHERE user_id = ${escapeStr(params.id)}`)
     await teamDb(`DELETE FROM cycles WHERE user_id = ${escapeStr(params.id)}`)
-    await teamDb(`DELETE FROM pattern_insights WHERE user_id = ${escapeStr(params.id)}`)
+    await safeDeleteFrom(`DELETE FROM pattern_insights WHERE user_id = ${escapeStr(params.id)}`)
     await teamDb(`DELETE FROM doctor_reports WHERE user_id = ${escapeStr(params.id)}`)
     await teamDb(`DELETE FROM sessions WHERE user_id = ${escapeStr(params.id)}`)
     await teamDb(`DELETE FROM users WHERE id = ${escapeStr(params.id)}`)
@@ -781,10 +796,10 @@ const router = {
     if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
     
     await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
-    await teamDb(`DELETE FROM pain_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
-    await teamDb(`DELETE FROM food_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
-    await teamDb(`DELETE FROM stress_mood_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
-    await teamDb(`DELETE FROM medication_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await safeDeleteFrom(`DELETE FROM pain_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await safeDeleteFrom(`DELETE FROM food_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await safeDeleteFrom(`DELETE FROM stress_mood_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await safeDeleteFrom(`DELETE FROM medication_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
     await teamDb(`DELETE FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
     
     json(res, { success: true, deleted: true })
