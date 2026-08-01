@@ -106,7 +106,7 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
     {
       render: () => (
         <div className="text-center space-y-6">
-          <div className="text-7xl mb-4">🌸</div>
+          <img src="/logo-icon.png" alt="EndoBuddy" className="w-24 h-24 mx-auto mb-4" />
           <h2 className="text-3xl font-bold text-gray-900 font-display">
             We believe you.
           </h2>

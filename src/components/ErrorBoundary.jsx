@@ -15,7 +15,7 @@ export default class ErrorBoundary extends Component {
       return (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
           <div className="max-w-md text-center space-y-4">
-            <div className="text-6xl">🌸</div>
+            <img src="/logo-icon.png" alt="EndoBuddy" className="w-16 h-16 mx-auto" />
             <h2 className="text-xl font-bold text-gray-900">Something went wrong</h2>
             <p className="text-sm text-gray-500">EndoBuddy encountered an unexpected issue. Please try refreshing.</p>
             <button

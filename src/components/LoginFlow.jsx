@@ -86,7 +86,7 @@ export default function LoginFlow({ onComplete, onSkip }) {
       <div className="w-full max-w-md animate-fadeIn">
         {/* App Logo */}
         <div className="text-center mb-8">
-          <div className="text-5xl mb-3" role="img" aria-label="EndoBuddy">🌸</div>
+          <img src="/logo-icon.png" alt="EndoBuddy" className="w-16 h-16 mx-auto mb-3" />
           <h1 className="text-3xl font-bold text-endo-purple">
             Endo<span className="text-endo-pink">Buddy</span>
           </h1>

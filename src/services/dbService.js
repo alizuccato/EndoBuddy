@@ -168,6 +168,19 @@ export async function getLogByDate(userId, date) {
   return request(`/logs/${userId || getUserId()}/${date}`)
 }
 
+export async function updateLog(logId, logData) {
+  return request(`/logs/${logId}`, {
+    method: 'PUT',
+    body: JSON.stringify(logData),
+  })
+}
+
+export async function deleteLog(logId) {
+  return request(`/logs/${logId}`, {
+    method: 'DELETE',
+  })
+}
+
 // ============================================================
 // Symptoms API
 // ============================================================

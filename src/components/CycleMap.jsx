@@ -136,29 +136,43 @@ export default function CycleMap({ cycleData }) {
             onClick={() => setSelectedDay(selectedDay === index ? null : index)}
           />
           {/* Tooltip on click */}
-          {isClicked && (
-            <g>
-              <rect
-                x={pos.x - 35}
-                y={pos.y - 28}
-                width={70}
-                height={22}
-                rx={4}
-                fill="white"
-                stroke="#E5E7EB"
-                strokeWidth={1}
-              />
-              <text
-                x={pos.x}
-                y={pos.y - 13}
-                textAnchor="middle"
-                className="text-[9px]"
-                fill="#4B5563"
-              >
-                Day {day.dayNum}: {day.painLevel}/10
-              </text>
-            </g>
-          )}
+          {isClicked && (() => {
+            const tipW = 70
+            const tipH = 22
+            const margin = 2
+            let tipX = pos.x - tipW / 2
+            let tipY = pos.y - tipH - 6 // default: above the dot
+            // Clamp horizontally so it never runs off the left/right edge
+            tipX = Math.min(Math.max(tipX, margin), SIZE - tipW - margin)
+            // If there's no room above (dot near the top edge), flip below
+            if (tipY < margin) {
+              tipY = pos.y + 8
+            }
+            tipY = Math.min(tipY, SIZE - tipH - margin)
+            return (
+              <g>
+                <rect
+                  x={tipX}
+                  y={tipY}
+                  width={tipW}
+                  height={tipH}
+                  rx={4}
+                  fill="white"
+                  stroke="#E5E7EB"
+                  strokeWidth={1}
+                />
+                <text
+                  x={tipX + tipW / 2}
+                  y={tipY + tipH / 2 + 3}
+                  textAnchor="middle"
+                  className="text-[9px]"
+                  fill="#4B5563"
+                >
+                  Day {day.dayNum}: {day.painLevel}/10
+                </text>
+              </g>
+            )
+          })()}
         </g>
       )
     })
@@ -171,7 +185,7 @@ export default function CycleMap({ cycleData }) {
     <div className="card">
       <div className="flex flex-col items-center">
         {/* SVG Cycle Map */}
-        <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
+        <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ overflow: 'visible' }}>
           {/* Outer ring background */}
           <circle
             cx={CENTER}

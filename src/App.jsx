@@ -15,7 +15,7 @@ import ClinicPortal from './components/ClinicPortal'
 import PremiumUpgradeFlow from './components/PremiumUpgradeFlow'
 import LoginFlow from './components/LoginFlow'
 import ProfileTab from './components/ProfileTab'
-import { getUserId, getUser, getLogs, saveDailyLog, completeOnboarding, getPatterns, logoutUser } from './services/dbService'
+import { getUserId, getUser, getLogs, saveDailyLog, completeOnboarding, getPatterns, logoutUser, deleteLog, updateLog } from './services/dbService'
 import { getLocalDateString, getDayOfCycle } from './utils/dateHelpers'
 
 function App() {
@@ -43,6 +43,25 @@ function App() {
     } catch (e) {
       console.log('Could not load patterns:', e)
       setPatterns([])
+    }
+  }, [])
+
+  const refreshLogs = useCallback(async (idToUse) => {
+    if (!idToUse) return
+    try {
+      const logs = await getLogs(idToUse)
+      const today = getLocalDateString()
+      const formatted = (logs || []).map(l => ({
+        id: l.id, date: l.log_date, painLevel: l.pain_level,
+        cycleDay: l.cycle_day, cyclePhase: l.cycle_phase,
+        flowLevel: l.flow_level, notes: l.notes,
+        overallWellness: l.overall_wellness, isPeriodDay: !!l.is_period_day,
+        symptoms: [],
+      }))
+      setRecentLogs(formatted)
+      setTodayLogged(formatted.some(l => l.date === today && l.painLevel != null))
+    } catch (e) {
+      console.log('Could not load logs:', e)
     }
   }, [])
 
@@ -93,25 +112,13 @@ function App() {
         setShowLogin(false)
         setShowOnboarding(false)
         if (isReturningClinician) setCurrentView('clinic')
-        try {
-          const logs = await getLogs(user.id)
-          if (logs && logs.length > 0) {
-            const today = getLocalDateString()
-            const formatted = logs.map(l => ({
-              id: l.id, date: l.log_date, painLevel: l.pain_level,
-              cycleDay: l.cycle_day, cyclePhase: l.cycle_phase,
-              flowLevel: l.flow_level, symptoms: [],
-            }))
-            setRecentLogs(formatted)
-            setTodayLogged(logs.some(l => l.log_date === today && l.pain_level != null))
-          }
-        } catch (e) { console.log('Could not load logs:', e) }
+        await refreshLogs(user.id)
         refreshPatterns(user.id)
       }
       setOnboardingChecked(true)
     }
     checkUser()
-  }, [refreshPatterns])
+  }, [refreshPatterns, refreshLogs])
 
   const handleLoginComplete = useCallback(async (userData) => {
     setUserId(userData.id)
@@ -141,13 +148,12 @@ function App() {
   const handleCloseLogging = useCallback(() => setShowLoggingFlow(false), [])
 
   const handleLogComplete = useCallback(async (logData) => {
-    const today = getLocalDateString()
-    const entry = { ...logData, date: today, id: Date.now() }
     try { await saveDailyLog({ ...logData, userId }) } catch (e) { console.error('Failed to save log:', e) }
-    setRecentLogs(prev => [entry, ...prev.slice(0, 6)]); setTodayLogged(true)
+    setTodayLogged(true)
     if (logData.painLevel >= 7) setShowComfortPrompt(true)
+    refreshLogs(userId)
     refreshPatterns(userId)
-  }, [userId, refreshPatterns])
+  }, [userId, refreshPatterns, refreshLogs])
 
   const handleOnboardingComplete = useCallback(async (data) => {
     try { 
@@ -172,6 +178,18 @@ function App() {
     setCurrentView('home')
     setShowLogin(true)
   }, [])
+  const handleDeleteLog = useCallback(async (logId) => {
+    await deleteLog(logId)
+    await refreshLogs(userId)
+    refreshPatterns(userId)
+  }, [userId, refreshLogs, refreshPatterns])
+
+  const handleUpdateLog = useCallback(async (logId, changes) => {
+    await updateLog(logId, changes)
+    await refreshLogs(userId)
+    refreshPatterns(userId)
+  }, [userId, refreshLogs, refreshPatterns])
+
   const handleComfortToggle = useCallback(() => { setComfortModeActive(prev => !prev); setShowComfortPrompt(false) }, [])
   const handleStartUpgrade = useCallback(() => setShowPremiumUpgrade(true), [])
   const handleUpgradeComplete = useCallback(() => { setIsPremium(true); setShowPremiumUpgrade(false) }, [])
@@ -247,7 +265,7 @@ function App() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="text-6xl mb-4 animate-pulse" role="img" aria-label="loading">{'\u{1F338}'}</div>
+          <img src="/logo-icon.png" alt="EndoBuddy" className="w-20 h-20 mx-auto mb-4 animate-pulse" />
           <p className="text-gray-500 text-sm">Loading...</p>
         </div>
       </div>
@@ -270,7 +288,7 @@ function App() {
         <header className="bg-white border-b border-gray-100 px-6 py-4 no-print">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-2xl" role="img" aria-label="buddy">{'\u{1F338}'}</span>
+              <img src="/logo-icon.png" alt="" className="w-8 h-8" />
               <h1 className="text-xl font-bold text-endo-purple">Endo<span className="text-endo-pink">Buddy</span></h1>
               {isClinician && <span className="ml-2 text-xs bg-blue-100 text-blue-700 font-medium px-2 py-0.5 rounded-full">Clinician</span>}
             </div>
@@ -326,6 +344,9 @@ function App() {
               onUpgrade={handleStartUpgrade}
               onLogout={handleLogout}
               onProfileUpdate={setUserProfile}
+              recentLogs={recentLogs}
+              onDeleteLog={handleDeleteLog}
+              onUpdateLog={handleUpdateLog}
             />
           )}
           {isClinician && currentView==='clinic' && <ClinicPortal clinician={userProfile} />}

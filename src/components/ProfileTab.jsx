@@ -19,6 +19,15 @@ function formatMemberSince(isoString) {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
 }
 
+function formatLogDate(dateStr) {
+  if (!dateStr) return ''
+  const d = new Date(`${dateStr}T00:00:00`)
+  if (isNaN(d.getTime())) return dateStr
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+const FLOW_OPTIONS = ['', 'spotting', 'light', 'medium', 'heavy']
+
 function SectionCard({ icon, title, subtitle, children }) {
   return (
     <div className="card">
@@ -33,7 +42,7 @@ function SectionCard({ icon, title, subtitle, children }) {
   )
 }
 
-export default function ProfileTab({ userId, userProfile, isPremium, userRole, onUpgrade, onLogout, onProfileUpdate }) {
+export default function ProfileTab({ userId, userProfile, isPremium, userRole, onUpgrade, onLogout, onProfileUpdate, recentLogs, onDeleteLog, onUpdateLog }) {
   const isClinician = userRole === 'clinician'
 
   // ---- Profile info (name/email) ----
@@ -229,6 +238,60 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
       setPortalLoading(false)
     }
   }, [userId])
+
+  // ---- Manage logs (edit / delete) ----
+  const [editingLog, setEditingLog] = useState(null) // the log object being edited, or null
+  const [editPainLevel, setEditPainLevel] = useState('')
+  const [editFlowLevel, setEditFlowLevel] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [logSaving, setLogSaving] = useState(false)
+  const [logSaveError, setLogSaveError] = useState('')
+
+  const startEditingLog = useCallback((log) => {
+    setEditingLog(log)
+    setEditPainLevel(log.painLevel ?? '')
+    setEditFlowLevel(log.flowLevel || '')
+    setEditNotes(log.notes || '')
+    setLogSaveError('')
+  }, [])
+
+  const handleSaveLogEdit = useCallback(async () => {
+    if (!editingLog) return
+    setLogSaving(true)
+    setLogSaveError('')
+    try {
+      await onUpdateLog?.(editingLog.id, {
+        painLevel: editPainLevel === '' ? null : Number(editPainLevel),
+        flowLevel: editFlowLevel || null,
+        notes: editNotes,
+      })
+      setEditingLog(null)
+    } catch (e) {
+      setLogSaveError(e.message || 'Could not save changes')
+    } finally {
+      setLogSaving(false)
+    }
+  }, [editingLog, editPainLevel, editFlowLevel, editNotes, onUpdateLog])
+
+  const [logToDelete, setLogToDelete] = useState(null) // log id pending delete confirmation
+  const [deletingLog, setDeletingLog] = useState(false)
+  const [logDeleteError, setLogDeleteError] = useState('')
+
+  const handleConfirmDeleteLog = useCallback(async () => {
+    if (!logToDelete) return
+    setDeletingLog(true)
+    setLogDeleteError('')
+    try {
+      await onDeleteLog?.(logToDelete)
+      setLogToDelete(null)
+    } catch (e) {
+      setLogDeleteError(e.message || 'Could not delete log')
+    } finally {
+      setDeletingLog(false)
+    }
+  }, [logToDelete, onDeleteLog])
+
+  const sortedLogs = [...(recentLogs || [])].sort((a, b) => (a.date < b.date ? 1 : -1))
 
   // ---- Delete account ----
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -468,6 +531,37 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
         </SectionCard>
       )}
 
+      {/* Your logs */}
+      <SectionCard icon={"\u{1F4CB}"} title="Your Logs" subtitle="Edit or remove individual entries">
+        {sortedLogs.length === 0 ? (
+          <p className="text-sm text-gray-400">No logs yet. Entries you save will show up here.</p>
+        ) : (
+          <div className="space-y-2 max-h-80 overflow-y-auto -mx-1 px-1">
+            {sortedLogs.map((log) => (
+              <div key={log.id} className="flex items-center justify-between gap-3 py-2 px-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{formatLogDate(log.date)}</p>
+                  <p className="text-xs text-gray-500">
+                    {log.painLevel != null ? `Pain ${log.painLevel}/10` : 'No pain logged'}
+                    {log.flowLevel ? ` \u00b7 ${log.flowLevel} flow` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => startEditingLog(log)} aria-label={`Edit log for ${formatLogDate(log.date)}`}
+                    className="text-xs font-medium text-endo-purple hover:text-endo-purple/80 px-3 py-2 min-h-[36px] rounded-full hover:bg-purple-50">
+                    Edit
+                  </button>
+                  <button onClick={() => { setLogToDelete(log.id); setLogDeleteError('') }} aria-label={`Delete log for ${formatLogDate(log.date)}`}
+                    className="text-xs font-medium text-red-500 hover:text-red-600 px-3 py-2 min-h-[36px] rounded-full hover:bg-red-50">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
       {/* Data export */}
       <SectionCard icon={"\u{1F4E5}"} title="Your Data" subtitle="Download a copy of your profile info for your own records">
         <button onClick={handleExport} className="btn-secondary min-h-[44px] px-6">Export my data</button>
@@ -477,6 +571,69 @@ export default function ProfileTab({ userId, userProfile, isPremium, userRole, o
       <button onClick={handleLogout} className="w-full card text-center text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50 min-h-[44px] py-3">
         {'\u{1F6AA}'} Log Out
       </button>
+
+      {/* Edit log modal */}
+      {editingLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !logSaving && setEditingLog(null)} />
+          <div className="relative z-10 card max-w-sm w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Edit log</h3>
+            <p className="text-sm text-gray-500 mb-4">{formatLogDate(editingLog.date)}</p>
+
+            <div className="mb-3">
+              <label htmlFor="edit-pain" className="block text-sm font-medium text-gray-700 mb-1.5">Pain level (0{'\u2013'}10)</label>
+              <input id="edit-pain" type="number" min="0" max="10" value={editPainLevel}
+                onChange={(e) => setEditPainLevel(e.target.value)} className="input-field min-h-[44px]" />
+            </div>
+
+            <div className="mb-3">
+              <label htmlFor="edit-flow" className="block text-sm font-medium text-gray-700 mb-1.5">Flow</label>
+              <select id="edit-flow" value={editFlowLevel} onChange={(e) => setEditFlowLevel(e.target.value)}
+                className="input-field min-h-[44px]">
+                {FLOW_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt ? opt.charAt(0).toUpperCase() + opt.slice(1) : 'None'}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mb-4">
+              <label htmlFor="edit-notes" className="block text-sm font-medium text-gray-700 mb-1.5">Notes</label>
+              <textarea id="edit-notes" value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
+                rows={3} className="input-field" />
+            </div>
+
+            {logSaveError && <p className="text-sm text-red-500 mb-3" role="alert">{logSaveError}</p>}
+            <div className="flex gap-2">
+              <button onClick={handleSaveLogEdit} disabled={logSaving}
+                className="flex-1 bg-gradient-to-r from-endo-purple to-endo-pink text-white font-medium py-2.5 rounded-full min-h-[44px] disabled:opacity-50">
+                {logSaving ? 'Saving...' : 'Save changes'}
+              </button>
+              <button onClick={() => setEditingLog(null)} disabled={logSaving}
+                className="text-sm text-gray-500 hover:text-gray-700 min-h-[44px] px-4">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete log confirmation modal */}
+      {logToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !deletingLog && setLogToDelete(null)} />
+          <div className="relative z-10 card max-w-sm w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Delete this log?</h3>
+            <p className="text-sm text-gray-500 mb-4">This entry will be permanently removed. This can't be undone.</p>
+            {logDeleteError && <p className="text-sm text-red-500 mb-3" role="alert">{logDeleteError}</p>}
+            <div className="flex gap-2">
+              <button onClick={handleConfirmDeleteLog} disabled={deletingLog}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2.5 rounded-full min-h-[44px] disabled:opacity-50">
+                {deletingLog ? 'Deleting...' : 'Delete log'}
+              </button>
+              <button onClick={() => setLogToDelete(null)} disabled={deletingLog}
+                className="text-sm text-gray-500 hover:text-gray-700 min-h-[44px] px-4">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Danger zone */}
       <div className="border border-red-100 rounded-2xl p-6 bg-red-50/40">

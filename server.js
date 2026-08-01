@@ -726,6 +726,70 @@ const router = {
     json(res, { ...log, symptoms })
   },
 
+  // Edit an existing log entry. Only fields present in the body are
+  // updated; symptoms (if provided) fully replace the existing set for
+  // that log, mirroring how the logging flow saves them on create.
+  'PUT /api/logs/:id': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid log ID format' }, 400)
+    
+    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
+    if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
+    if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
+    
+    const body = await parseBody(req)
+    const now = new Date().toISOString()
+    
+    const updates = []
+    if (body.cycleDay !== undefined) updates.push(`cycle_day = ${isValidNumber(body.cycleDay) ? Number(body.cycleDay) : 'NULL'}`)
+    if (body.cyclePhase !== undefined) updates.push(`cycle_phase = ${['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? escapeStr(body.cyclePhase) : 'NULL'}`)
+    if (body.isPeriodDay !== undefined) updates.push(`is_period_day = ${body.isPeriodDay ? 1 : 0}`)
+    if (body.flowLevel !== undefined) updates.push(`flow_level = ${['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? escapeStr(body.flowLevel) : 'NULL'}`)
+    if (body.painLevel !== undefined) updates.push(`pain_level = ${(isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : 'NULL'}`)
+    if (body.overallWellness !== undefined) updates.push(`overall_wellness = ${(isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : 'NULL'}`)
+    if (body.notes !== undefined) updates.push(`notes = ${body.notes ? escapeStr(String(body.notes)) : 'NULL'}`)
+    
+    if (updates.length === 0 && !Array.isArray(body.symptoms)) {
+      return json(res, { error: 'No valid fields to update' }, 400)
+    }
+    
+    if (updates.length > 0) {
+      await teamDb(`UPDATE daily_logs SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
+    }
+    
+    // Replace symptoms if a new list was provided
+    if (Array.isArray(body.symptoms)) {
+      await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+      for (const symptom of body.symptoms) {
+        if (!symptom.name) continue
+        const sid = randomUUID()
+        const safeSymName = escapeStr(symptom.name)
+        const safeSymIcon = escapeStr(symptom.icon || '')
+        const safeSeverity = (isValidNumber(symptom.severity) && symptom.severity >= 1 && symptom.severity <= 10) ? Number(symptom.severity) : 5
+        await teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(params.id)}, ${safeSymName}, ${safeSymIcon}, ${safeSeverity}, ${escapeStr(now)})`)
+      }
+    }
+    
+    json(res, { id: params.id, updated: true })
+  },
+
+  // Permanently delete a single log entry (and its symptoms).
+  'DELETE /api/logs/:id': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid log ID format' }, 400)
+    
+    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
+    if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
+    if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
+    
+    await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM pain_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM food_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM stress_mood_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM medication_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+    await teamDb(`DELETE FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
+    
+    json(res, { success: true, deleted: true })
+  },
+
   // ===== SYMPTOMS FOR A LOG =====
   'GET /api/symptoms/:logId': async (req, res, params) => {
     if (!isValidUUID(params.logId)) return json(res, { error: 'Invalid log ID format' }, 400)
