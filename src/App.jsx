@@ -157,13 +157,15 @@ function App() {
 
   const handleOnboardingComplete = useCallback(async (data) => {
     try { 
-      const user = await completeOnboarding(data)
-      setUserId(user.id)
-      setUserProfile(user)
+      const user = await completeOnboarding(data, userId)
+      if (user) {
+        setUserId(user.id)
+        setUserProfile(user)
+      }
     }
-    catch (e) { console.error('Failed to save onboarding:', e); setUserId(getUserId()) }
+    catch (e) { console.error('Failed to save onboarding:', e); if (!userId) setUserId(getUserId()) }
     setShowOnboarding(false)
-  }, [])
+  }, [userId])
 
   const handleOnboardingSkip = useCallback(() => setShowOnboarding(false), [])
   const handleLogout = useCallback(() => {

@@ -240,14 +240,29 @@ export async function getFeedbackStats() {
 // Onboarding
 // ============================================================
 
-export async function completeOnboarding(onboardingData) {
-  // Create user
+// Saves onboarding answers. If existingUserId is provided (the person is
+// already logged in — e.g. their account just happens to have
+// onboarding_complete unset), this UPDATES that account instead of
+// creating a brand new anonymous one, which used to silently orphan real
+// logins by switching localStorage over to a fresh empty account.
+export async function completeOnboarding(onboardingData, existingUserId) {
+  if (existingUserId) {
+    await updateUser(existingUserId, {
+      displayName: onboardingData.name || undefined,
+      cycleLength: onboardingData.cycleLength || 28,
+      lastPeriodStart: onboardingData.lastPeriodStart || undefined,
+      onboardingComplete: 1,
+    })
+    return await getUser(existingUserId)
+  }
+
+  // No one logged in yet — create a fresh anonymous account (original behavior)
   const user = await createUser({
     displayName: onboardingData.name || '',
     cycleLength: onboardingData.cycleLength || 28,
     lastPeriodStart: onboardingData.lastPeriodStart || null,
   })
-  
+
   return user
 }
 
