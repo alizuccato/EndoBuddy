@@ -367,7 +367,7 @@ function App() {
         </main>
 
         {isPatient && !showLoggingFlow && currentView==='home' && (
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 p-4 md:static md:border-t-0 no-print">
+          <div className="hidden md:block bg-white border-t border-gray-100 p-4 no-print">
             <div className="max-w-4xl mx-auto">
               <button onClick={handleOpenLogging} className="w-full btn-primary text-lg py-4 shadow-lg flex items-center justify-center gap-2"><span className="text-xl">+</span> Log Symptoms</button>
             </div>
