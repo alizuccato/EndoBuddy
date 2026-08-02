@@ -95,6 +95,30 @@ try {
   console.error('Failed to create clinic_invitations table:', e.message)
 }
 
+// treatment_log powers the Premium "Treatments" dashboard — lets a patient
+// record medications/PT/supplements they're trying so they can track what's
+// working. Self-contained (doesn't depend on the medications /
+// medication_entries tables from 001_initial_schema.sql, which — per the
+// comments above — were never actually created in prod).
+try {
+  await teamDb(`CREATE TABLE IF NOT EXISTS treatment_log (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'medication',
+    dosage TEXT,
+    start_date TEXT NOT NULL,
+    end_date TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    effective TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`)
+} catch (e) {
+  console.error('Failed to create treatment_log table:', e.message)
+}
+
 // doctor_reports is referenced elsewhere in this file (account deletion,
 // clinic patient roster) but historically had no CREATE statement anywhere
 // in server.js — only in the 001 migration file that never actually runs
@@ -802,6 +826,70 @@ const router = {
     await safeDeleteFrom(`DELETE FROM medication_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
     await teamDb(`DELETE FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
     
+    json(res, { success: true, deleted: true })
+  },
+
+  // ===== TREATMENTS (medications, PT, supplements, etc.) =====
+  'POST /api/treatments': async (req, res) => {
+    const body = await parseBody(req)
+    if (!isValidUUID(body.userId)) return json(res, { error: 'Invalid or missing user ID' }, 400)
+    if (!(await verifyUserAuth(req, res, body.userId))) return
+
+    if (!body.name || !String(body.name).trim()) return json(res, { error: 'Treatment name is required' }, 400)
+    if (!isValidDate(body.startDate)) return json(res, { error: 'Invalid or missing start date' }, 400)
+
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    const safeName = escapeStr(String(body.name).trim())
+    const safeType = ['medication', 'supplement', 'therapy', 'other'].includes(body.type) ? escapeStr(body.type) : escapeStr('medication')
+    const safeDosage = body.dosage ? escapeStr(String(body.dosage)) : 'NULL'
+    const safeEndDate = isValidDate(body.endDate) ? escapeStr(body.endDate) : 'NULL'
+    const safeNotes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
+
+    await teamDb(`INSERT INTO treatment_log (id, user_id, name, type, dosage, start_date, end_date, status, notes, created_at, updated_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${safeName}, ${safeType}, ${safeDosage}, ${escapeStr(body.startDate)}, ${safeEndDate}, ${escapeStr('active')}, ${safeNotes}, ${escapeStr(now)}, ${escapeStr(now)})`)
+
+    json(res, { id, ...body }, 201)
+  },
+
+  'GET /api/treatments/:userId': async (req, res, params) => {
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.userId))) return
+
+    const rows = await teamDb(`SELECT * FROM treatment_log WHERE user_id = ${escapeStr(params.userId)} ORDER BY start_date DESC, created_at DESC`)
+    json(res, rows)
+  },
+
+  'PUT /api/treatments/:id': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid treatment ID format' }, 400)
+
+    const rows = await teamDb(`SELECT user_id FROM treatment_log WHERE id = ${escapeStr(params.id)}`)
+    if (rows.length === 0) return json(res, { error: 'Treatment not found' }, 404)
+    if (!(await verifyUserAuth(req, res, rows[0].user_id))) return
+
+    const body = await parseBody(req)
+    const now = new Date().toISOString()
+    const updates = []
+    if (body.name !== undefined) updates.push(`name = ${escapeStr(String(body.name).trim())}`)
+    if (body.dosage !== undefined) updates.push(`dosage = ${body.dosage ? escapeStr(String(body.dosage)) : 'NULL'}`)
+    if (body.endDate !== undefined) updates.push(`end_date = ${isValidDate(body.endDate) ? escapeStr(body.endDate) : 'NULL'}`)
+    if (body.status !== undefined) updates.push(`status = ${['active', 'stopped'].includes(body.status) ? escapeStr(body.status) : escapeStr('active')}`)
+    if (body.effective !== undefined) updates.push(`effective = ${['yes', 'no', 'unsure'].includes(body.effective) ? escapeStr(body.effective) : 'NULL'}`)
+    if (body.notes !== undefined) updates.push(`notes = ${body.notes ? escapeStr(String(body.notes)) : 'NULL'}`)
+
+    if (updates.length === 0) return json(res, { error: 'No valid fields to update' }, 400)
+
+    await teamDb(`UPDATE treatment_log SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
+    json(res, { id: params.id, updated: true })
+  },
+
+  'DELETE /api/treatments/:id': async (req, res, params) => {
+    if (!isValidUUID(params.id)) return json(res, { error: 'Invalid treatment ID format' }, 400)
+
+    const rows = await teamDb(`SELECT user_id FROM treatment_log WHERE id = ${escapeStr(params.id)}`)
+    if (rows.length === 0) return json(res, { error: 'Treatment not found' }, 404)
+    if (!(await verifyUserAuth(req, res, rows[0].user_id))) return
+
+    await teamDb(`DELETE FROM treatment_log WHERE id = ${escapeStr(params.id)}`)
     json(res, { success: true, deleted: true })
   },
 

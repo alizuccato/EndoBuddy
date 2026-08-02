@@ -148,7 +148,10 @@ function App() {
   }, [])
 
   const handleOpenLogging = useCallback(() => setShowLoggingFlow(true), [])
-  const handleCloseLogging = useCallback(() => setShowLoggingFlow(false), [])
+  const handleCloseLogging = useCallback(() => {
+    setShowLoggingFlow(false)
+    setCurrentView('home')
+  }, [])
 
   const handleLogComplete = useCallback(async (logData) => {
     try { await saveDailyLog({ ...logData, userId }) } catch (e) { console.error('Failed to save log:', e) }
@@ -297,7 +300,7 @@ function App() {
               <h1 className="text-xl font-bold text-endo-purple">Endo<span className="text-endo-pink">Buddy</span></h1>
               {isClinician && <span className="ml-2 text-xs bg-blue-100 text-blue-700 font-medium px-2 py-0.5 rounded-full">Clinician</span>}
             </div>
-            <nav className="flex items-center gap-4 text-sm font-medium text-gray-600">
+            <nav className="hidden md:flex items-center gap-4 text-sm font-medium text-gray-600">
               {isPatient && (
                 <>
                   <NavBtn currentView={currentView} view="home" onClick={() => { setCurrentView('home'); setShowLoggingFlow(false) }} active={currentView==='home'&&!showLoggingFlow}>Home</NavBtn>
@@ -338,7 +341,7 @@ function App() {
           {isPatient && showLoggingFlow && <LoggingFlow onComplete={handleLogComplete} onClose={handleCloseLogging} />}
           {isPatient && !showLoggingFlow && currentView==='home' && <PhaseAwareHome onStartLogging={handleOpenLogging} todayLogged={todayLogged} recentLogs={recentLogs} cycleData={cycleData} isPremium={isPremium} onUpgrade={handleStartUpgrade} />}
           {isPatient && !showLoggingFlow && currentView==='insights' && <InsightsDashboard cycleData={cycleData} insights={patterns} />}
-          {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} cycleData={cycleData} patterns={patterns} />}
+          {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} cycleData={cycleData} patterns={patterns} userId={userId} />}
           {currentView==='reports' && <ReportsView recentLogs={recentLogs} cycleData={cycleData} patterns={patterns} />}
           {currentView==='profile' && (
             <ProfileTab
@@ -455,7 +458,7 @@ function LockedFeature({ onUpgrade, feature = 'meals' }) {
   )
 }
 
-function PremiumView({ isPremium, onUpgrade, cycleData, patterns }) {
+function PremiumView({ isPremium, onUpgrade, cycleData, patterns, userId }) {
   const [premiumTab, setPremiumTab] = useState('meals')
   const phase = cycleData?.currentPhase || 'luteal'
   return (
@@ -474,7 +477,7 @@ function PremiumView({ isPremium, onUpgrade, cycleData, patterns }) {
       {premiumTab==='meals'&&(isPremium?<PremiumMealPlans currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="meals"/>)}
       {premiumTab==='deep'&&(isPremium?<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={patterns}/></div>:<LockedFeature onUpgrade={onUpgrade} feature="deep"/>)}
       {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns}/>:<LockedFeature onUpgrade={onUpgrade} feature="surgical"/>)}
-      {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard/>:<LockedFeature onUpgrade={onUpgrade} feature="treatment"/>)}
+      {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard userId={userId}/>:<LockedFeature onUpgrade={onUpgrade} feature="treatment"/>)}
       {premiumTab==='viz'&&(isPremium?<PremiumVisualizations patterns={patterns} currentDayNum={cycleData?.currentDayNum} cycleLength={cycleData?.cycleLength}/>:<LockedFeature onUpgrade={onUpgrade} feature="viz"/>)}
     </div>
   )

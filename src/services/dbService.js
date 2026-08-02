@@ -221,6 +221,35 @@ export async function getPatterns(userId) {
 }
 
 // ============================================================
+// Treatments API (medications, supplements, PT, etc.)
+// ============================================================
+
+export async function getTreatments(userId) {
+  return request(`/treatments/${userId || getUserId()}`)
+}
+
+export async function addTreatment(treatmentData) {
+  const userId = treatmentData.userId || getUserId()
+  return request('/treatments', {
+    method: 'POST',
+    body: JSON.stringify({ ...treatmentData, userId }),
+  })
+}
+
+export async function updateTreatment(treatmentId, data) {
+  return request(`/treatments/${treatmentId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deleteTreatment(treatmentId) {
+  return request(`/treatments/${treatmentId}`, {
+    method: 'DELETE',
+  })
+}
+
+// ============================================================
 // Feedback API
 // ============================================================
 
