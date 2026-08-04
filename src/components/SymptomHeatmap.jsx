@@ -28,7 +28,7 @@ export default function SymptomHeatmap({ cycleData }) {
   
   // Calculate calendar grid based on the cycle start date
   const calendar = useMemo(() => {
-    const startDate = new Date(cycleStartDate || Date.now())
+    const startDate = new Date()
     
     // Adjust month by offset
     const targetDate = new Date(startDate)
