@@ -5,6 +5,7 @@ import OnboardingFlow from './components/OnboardingFlow'
 import DoctorReport from './components/DoctorReport'
 import ComfortMode from './components/ComfortMode'
 import PremiumMealPlans from './components/PremiumMealPlans'
+import PremiumExercises from './components/PremiumExercises'
 import PremiumDeepReport from './components/PremiumDeepReport'
 import PremiumVisualizations from './components/PremiumVisualizations'
 import SurgicalPlanningSummary from './components/SurgicalPlanningSummary'
@@ -440,6 +441,7 @@ function ReportsView({ recentLogs, cycleData, patterns }) {
 
 const LOCKED_FEATURE_COPY = {
   meals: { icon: '\u{1F37D}', description: 'Unlock personalized phase-based meal plans tailored to your symptoms and cravings.' },
+  exercises: { icon: '\u{1F9D8}', description: 'Unlock a full phase-based movement library, with gentle modifications for flare days.' },
   deep: { icon: '\u{1F4CA}', description: 'Unlock your AI-powered deep report, correlating pain, symptoms, and phase across your full history.' },
   surgical: { icon: '\u{1F52C}', description: 'Unlock a lesion-mapped surgical planning summary to bring straight to your specialist.' },
   treatment: { icon: '\u{1F48A}', description: 'Unlock your treatment response dashboard to see what\u2019s actually working over time.' },
@@ -469,12 +471,13 @@ function PremiumView({ isPremium, onUpgrade, cycleData, patterns, userId }) {
         :<button onClick={onUpgrade} className="bg-gradient-to-r from-endo-purple to-endo-pink text-white text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 shadow-md">Upgrade Now</button>}
       </div>
       <div className="flex gap-2 mb-6 border-b border-gray-100 pb-3 flex-wrap">
-        {[{id:'meals',label:'Meal Plans',icon:'\u{1F37D}'},{id:'deep',label:'Deep Report',icon:'\u{1F4CA}'},{id:'surgical',label:'Surgical Plan',icon:'\u{1F52C}'},{id:'treatment',label:'Treatments',icon:'\u{1F48A}'},{id:'viz',label:'Visualizations',icon:'\u2728'}].map(tab=>(
+        {[{id:'meals',label:'Meal Plans',icon:'\u{1F37D}'},{id:'exercises',label:'Exercises',icon:'\u{1F9D8}'},{id:'deep',label:'Deep Report',icon:'\u{1F4CA}'},{id:'surgical',label:'Surgical Plan',icon:'\u{1F52C}'},{id:'treatment',label:'Treatments',icon:'\u{1F48A}'},{id:'viz',label:'Visualizations',icon:'\u2728'}].map(tab=>(
           <button key={tab.id} onClick={()=>setPremiumTab(tab.id)}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl transition-all ${premiumTab===tab.id?'bg-endo-purple text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}><span>{tab.icon}</span><span>{tab.label}</span></button>
         ))}
       </div>
       {premiumTab==='meals'&&(isPremium?<PremiumMealPlans currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="meals"/>)}
+      {premiumTab==='exercises'&&(isPremium?<PremiumExercises currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="exercises"/>)}
       {premiumTab==='deep'&&(isPremium?<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={patterns}/></div>:<LockedFeature onUpgrade={onUpgrade} feature="deep"/>)}
       {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns}/>:<LockedFeature onUpgrade={onUpgrade} feature="surgical"/>)}
       {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard userId={userId}/>:<LockedFeature onUpgrade={onUpgrade} feature="treatment"/>)}
