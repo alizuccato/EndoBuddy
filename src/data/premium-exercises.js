@@ -9,7 +9,7 @@
  * IMAGES: `image` is a path under /public that Ali will supply. Until a real file
  * exists at that path, the UI falls back to a themed icon tile (see
  * ImageWithFallback in PremiumExercises.jsx). Suggested convention:
- * /images/exercises/<phase>-<slug>.jpg (e.g. /images/exercises/luteal-yin-yoga.jpg).
+ * /images/exercises/<phase>-<slug>.png (e.g. /images/exercises/luteal-yin-yoga.png).
  *
  * intensity: 'gentle' | 'moderate' | 'active'
  */
@@ -19,7 +19,7 @@ const EXERCISES = {
     {
       id: 'menstrual-restorative-yoga',
       title: 'Restorative Yoga for Cramp Relief',
-      image: '/images/exercises/menstrual-restorative-yoga.jpg',
+      image: '/images/exercises/menstrual-restorative-yoga.png',
       duration: '15-20 min',
       intensity: 'gentle',
       equipment: ['Yoga mat', 'Pillow or bolster', 'Weighted or regular blanket'],
@@ -35,7 +35,7 @@ const EXERCISES = {
     {
       id: 'menstrual-heat-breathwork',
       title: 'Heat & Breath Cramp Relief',
-      image: '/images/exercises/menstrual-heat-breathwork.jpg',
+      image: '/images/exercises/menstrual-heat-breathwork.png',
       duration: '10 min',
       intensity: 'gentle',
       equipment: ['Heating pad or hot water bottle'],
@@ -52,7 +52,7 @@ const EXERCISES = {
     {
       id: 'menstrual-gentle-walk',
       title: 'Gentle 10-Minute Walk',
-      image: '/images/exercises/menstrual-gentle-walk.jpg',
+      image: '/images/exercises/menstrual-gentle-walk.png',
       duration: '10 min',
       intensity: 'gentle',
       equipment: ['Comfortable shoes'],
@@ -71,7 +71,7 @@ const EXERCISES = {
     {
       id: 'follicular-strength-training',
       title: 'Strength Training (Moderate)',
-      image: '/images/exercises/follicular-strength-training.jpg',
+      image: '/images/exercises/follicular-strength-training.png',
       duration: '20-30 min',
       intensity: 'moderate',
       equipment: ['Dumbbells or resistance bands (optional)', 'Mat'],
@@ -88,7 +88,7 @@ const EXERCISES = {
     {
       id: 'follicular-morning-walk-sunlight',
       title: 'Energizing Morning Walk + Sunlight',
-      image: '/images/exercises/follicular-morning-walk-sunlight.jpg',
+      image: '/images/exercises/follicular-morning-walk-sunlight.png',
       duration: '20 min',
       intensity: 'gentle',
       equipment: ['Comfortable shoes'],
@@ -104,7 +104,7 @@ const EXERCISES = {
     {
       id: 'follicular-gut-ritual-movement',
       title: 'Gut-Nourishing Morning Ritual',
-      image: '/images/exercises/follicular-gut-ritual-movement.jpg',
+      image: '/images/exercises/follicular-gut-ritual-movement.png',
       duration: '5 min',
       intensity: 'gentle',
       equipment: ['Warm water', 'Lemon'],
@@ -123,7 +123,7 @@ const EXERCISES = {
     {
       id: 'ovulatory-moderate-cardio',
       title: 'Moderate Cardio (Listen to Your Body)',
-      image: '/images/exercises/ovulatory-moderate-cardio.jpg',
+      image: '/images/exercises/ovulatory-moderate-cardio.png',
       duration: '20-30 min',
       intensity: 'active',
       equipment: ['Comfortable shoes', 'Bike or pool, optional'],
@@ -140,7 +140,7 @@ const EXERCISES = {
     {
       id: 'ovulatory-hip-opening-flow',
       title: 'Hip-Opening Yoga Flow',
-      image: '/images/exercises/ovulatory-hip-opening-flow.jpg',
+      image: '/images/exercises/ovulatory-hip-opening-flow.png',
       duration: '15-20 min',
       intensity: 'moderate',
       equipment: ['Yoga mat', 'Pillow or block (optional)'],
@@ -157,7 +157,7 @@ const EXERCISES = {
     {
       id: 'ovulatory-hydration-electrolyte-walk',
       title: 'Hydration-Focused Recovery Walk',
-      image: '/images/exercises/ovulatory-hydration-electrolyte-walk.jpg',
+      image: '/images/exercises/ovulatory-hydration-electrolyte-walk.png',
       duration: 'Throughout the day',
       intensity: 'gentle',
       equipment: ['Water bottle', 'Electrolytes or a pinch of sea salt'],
@@ -176,7 +176,7 @@ const EXERCISES = {
     {
       id: 'luteal-yin-yoga',
       title: 'Gentle Yin Yoga or Restorative Stretching',
-      image: '/images/exercises/luteal-yin-yoga.jpg',
+      image: '/images/exercises/luteal-yin-yoga.png',
       duration: '20-30 min',
       intensity: 'gentle',
       equipment: ['Yoga mat', 'Pillow or bolster'],
@@ -193,7 +193,7 @@ const EXERCISES = {
     {
       id: 'luteal-evening-wind-down',
       title: 'Evening Wind-Down Protocol',
-      image: '/images/exercises/luteal-evening-wind-down.jpg',
+      image: '/images/exercises/luteal-evening-wind-down.png',
       duration: '1-2 hours before bed',
       intensity: 'gentle',
       equipment: ['Journal (optional)', 'Chamomile or lavender tea'],
@@ -210,7 +210,7 @@ const EXERCISES = {
     {
       id: 'luteal-comfort-first-movement',
       title: 'Comfort-First Movement: Walking or Swimming',
-      image: '/images/exercises/luteal-comfort-first-movement.jpg',
+      image: '/images/exercises/luteal-comfort-first-movement.png',
       duration: '20 min',
       intensity: 'gentle',
       equipment: ['Comfortable shoes, or swimwear'],
