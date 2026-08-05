@@ -9,8 +9,8 @@
  * IMAGES: `image` is a path under /public that Ali will supply. Until a real file
  * exists at that path, the UI automatically falls back to a themed icon tile
  * (see ImageWithFallback in PremiumMealPlans.jsx) so nothing looks broken.
- * Suggested convention: /images/recipes/<phase>-<slug>.jpg (e.g.
- * /images/recipes/menstrual-turmeric-oatmeal.jpg), roughly 800x600, landscape.
+ * Suggested convention: /images/recipes/<phase>-<slug>.png (e.g.
+ * /images/recipes/menstrual-turmeric-oatmeal.png), roughly 800x600, landscape.
  *
  * Dietary tags drive the filter chips in PremiumMealPlans: 'Vegan', 'Vegetarian',
  * 'Gluten-Free', 'Dairy-Free', 'Nut-Free'.
@@ -21,7 +21,7 @@ const RECIPES = {
     {
       id: 'menstrual-turmeric-oatmeal',
       title: 'Warm Turmeric Oatmeal',
-      image: '/images/recipes/menstrual-turmeric-oatmeal.jpg',
+      image: '/images/recipes/menstrual-turmeric-oatmeal.png',
       mealType: 'breakfast',
       servings: 1,
       prepTime: '5 min',
@@ -48,7 +48,7 @@ const RECIPES = {
     {
       id: 'menstrual-red-lentil-soup',
       title: 'Red Lentil & Ginger Soup',
-      image: '/images/recipes/menstrual-red-lentil-soup.jpg',
+      image: '/images/recipes/menstrual-red-lentil-soup.png',
       mealType: 'lunch',
       servings: 4,
       prepTime: '10 min',
@@ -76,7 +76,7 @@ const RECIPES = {
     {
       id: 'menstrual-grilled-salmon',
       title: 'Grilled Salmon with Sweet Potato & Greens',
-      image: '/images/recipes/menstrual-grilled-salmon.jpg',
+      image: '/images/recipes/menstrual-grilled-salmon.png',
       mealType: 'dinner',
       servings: 2,
       prepTime: '10 min',
@@ -103,7 +103,7 @@ const RECIPES = {
     {
       id: 'menstrual-magnesium-smoothie',
       title: 'Magnesium-Rich Smoothie Bowl',
-      image: '/images/recipes/menstrual-magnesium-smoothie.jpg',
+      image: '/images/recipes/menstrual-magnesium-smoothie.png',
       mealType: 'snack',
       servings: 1,
       prepTime: '5 min',
@@ -129,7 +129,7 @@ const RECIPES = {
     {
       id: 'menstrual-bone-broth-tofu',
       title: 'Bone Broth with Soft Tofu & Greens',
-      image: '/images/recipes/menstrual-bone-broth-tofu.jpg',
+      image: '/images/recipes/menstrual-bone-broth-tofu.png',
       mealType: 'snack',
       servings: 2,
       prepTime: '5 min',
@@ -154,7 +154,7 @@ const RECIPES = {
     {
       id: 'menstrual-golden-milk-chia',
       title: 'Golden Milk Chia Pudding',
-      image: '/images/recipes/menstrual-golden-milk-chia.jpg',
+      image: '/images/recipes/menstrual-golden-milk-chia.png',
       mealType: 'snack',
       servings: 2,
       prepTime: '5 min (+ overnight chill)',
@@ -183,7 +183,7 @@ const RECIPES = {
     {
       id: 'follicular-green-detox-smoothie',
       title: 'Green Detox Smoothie',
-      image: '/images/recipes/follicular-green-detox-smoothie.jpg',
+      image: '/images/recipes/follicular-green-detox-smoothie.png',
       mealType: 'breakfast',
       servings: 1,
       prepTime: '5 min',
@@ -207,7 +207,7 @@ const RECIPES = {
     {
       id: 'follicular-cruciferous-power-bowl',
       title: 'Cruciferous Power Bowl',
-      image: '/images/recipes/follicular-cruciferous-power-bowl.jpg',
+      image: '/images/recipes/follicular-cruciferous-power-bowl.png',
       mealType: 'lunch',
       servings: 2,
       prepTime: '10 min',
@@ -236,7 +236,7 @@ const RECIPES = {
     {
       id: 'follicular-citrus-herb-chicken',
       title: 'Citrus & Herb Grilled Chicken',
-      image: '/images/recipes/follicular-citrus-herb-chicken.jpg',
+      image: '/images/recipes/follicular-citrus-herb-chicken.png',
       mealType: 'dinner',
       servings: 2,
       prepTime: '15 min (+ marinating)',
@@ -263,7 +263,7 @@ const RECIPES = {
     {
       id: 'follicular-fermented-avocado-toast',
       title: 'Fermented Veggie & Avocado Toast',
-      image: '/images/recipes/follicular-fermented-avocado-toast.jpg',
+      image: '/images/recipes/follicular-fermented-avocado-toast.png',
       mealType: 'breakfast',
       servings: 1,
       prepTime: '10 min',
@@ -289,7 +289,7 @@ const RECIPES = {
     {
       id: 'follicular-warm-quinoa-roasted-veggie',
       title: 'Warm Quinoa & Roasted Veggie Bowl',
-      image: '/images/recipes/follicular-warm-quinoa-roasted-veggie.jpg',
+      image: '/images/recipes/follicular-warm-quinoa-roasted-veggie.png',
       mealType: 'lunch',
       servings: 2,
       prepTime: '10 min',
@@ -316,7 +316,7 @@ const RECIPES = {
     {
       id: 'follicular-almond-orange-energy-bites',
       title: 'Almond & Orange Energy Bites',
-      image: '/images/recipes/follicular-almond-orange-energy-bites.jpg',
+      image: '/images/recipes/follicular-almond-orange-energy-bites.png',
       mealType: 'snack',
       servings: 6,
       prepTime: '15 min',
@@ -344,7 +344,7 @@ const RECIPES = {
     {
       id: 'ovulatory-antioxidant-berry-bowl',
       title: 'Antioxidant Berry & Seed Bowl',
-      image: '/images/recipes/ovulatory-antioxidant-berry-bowl.jpg',
+      image: '/images/recipes/ovulatory-antioxidant-berry-bowl.png',
       mealType: 'breakfast',
       servings: 1,
       prepTime: '5 min',
@@ -369,7 +369,7 @@ const RECIPES = {
     {
       id: 'ovulatory-roasted-beet-chickpea-bowl',
       title: 'Roasted Beet & Chickpea Buddha Bowl',
-      image: '/images/recipes/ovulatory-roasted-beet-chickpea-bowl.jpg',
+      image: '/images/recipes/ovulatory-roasted-beet-chickpea-bowl.png',
       mealType: 'lunch',
       servings: 2,
       prepTime: '10 min',
@@ -397,7 +397,7 @@ const RECIPES = {
     {
       id: 'ovulatory-turmeric-tempeh-stirfry',
       title: 'Turmeric Tempeh Stir-Fry',
-      image: '/images/recipes/ovulatory-turmeric-tempeh-stirfry.jpg',
+      image: '/images/recipes/ovulatory-turmeric-tempeh-stirfry.png',
       mealType: 'dinner',
       servings: 2,
       prepTime: '10 min',
@@ -426,7 +426,7 @@ const RECIPES = {
     {
       id: 'ovulatory-zesty-shrimp-avocado-salad',
       title: 'Zesty Shrimp & Avocado Salad',
-      image: '/images/recipes/ovulatory-zesty-shrimp-avocado-salad.jpg',
+      image: '/images/recipes/ovulatory-zesty-shrimp-avocado-salad.png',
       mealType: 'lunch',
       servings: 2,
       prepTime: '15 min',
@@ -454,7 +454,7 @@ const RECIPES = {
     {
       id: 'ovulatory-pumpkin-seed-pesto-pasta',
       title: 'Zinc-Rich Pumpkin Seed Pesto Pasta',
-      image: '/images/recipes/ovulatory-pumpkin-seed-pesto-pasta.jpg',
+      image: '/images/recipes/ovulatory-pumpkin-seed-pesto-pasta.png',
       mealType: 'dinner',
       servings: 3,
       prepTime: '10 min',
@@ -481,7 +481,7 @@ const RECIPES = {
     {
       id: 'ovulatory-hummus-crudite',
       title: 'Hummus with Crudités',
-      image: '/images/recipes/ovulatory-hummus-crudite.jpg',
+      image: '/images/recipes/ovulatory-hummus-crudite.png',
       mealType: 'snack',
       servings: 2,
       prepTime: '10 min',
@@ -506,7 +506,7 @@ const RECIPES = {
     {
       id: 'luteal-sweet-potato-spinach-hash',
       title: 'Sweet Potato & Spinach Breakfast Hash',
-      image: '/images/recipes/luteal-sweet-potato-spinach-hash.jpg',
+      image: '/images/recipes/luteal-sweet-potato-spinach-hash.png',
       mealType: 'breakfast',
       servings: 2,
       prepTime: '10 min',
@@ -533,7 +533,7 @@ const RECIPES = {
     {
       id: 'luteal-chocolate-cherry-oats',
       title: 'Dark Chocolate & Cherry Overnight Oats',
-      image: '/images/recipes/luteal-chocolate-cherry-oats.jpg',
+      image: '/images/recipes/luteal-chocolate-cherry-oats.png',
       mealType: 'breakfast',
       servings: 1,
       prepTime: '5 min (+ overnight chill)',
@@ -559,7 +559,7 @@ const RECIPES = {
     {
       id: 'luteal-salmon-roasted-veg-plate',
       title: 'Warm Salmon & Roasted Vegetable Plate',
-      image: '/images/recipes/luteal-salmon-roasted-veg-plate.jpg',
+      image: '/images/recipes/luteal-salmon-roasted-veg-plate.png',
       mealType: 'dinner',
       servings: 2,
       prepTime: '10 min',
@@ -586,7 +586,7 @@ const RECIPES = {
     {
       id: 'luteal-magnesium-buddha-bowl',
       title: 'Magnesium-Boosted Buddha Bowl',
-      image: '/images/recipes/luteal-magnesium-buddha-bowl.jpg',
+      image: '/images/recipes/luteal-magnesium-buddha-bowl.png',
       mealType: 'lunch',
       servings: 2,
       prepTime: '10 min',
@@ -614,7 +614,7 @@ const RECIPES = {
     {
       id: 'luteal-chamomile-walnut-snack',
       title: 'Chamomile & Walnut Snack Plate',
-      image: '/images/recipes/luteal-chamomile-walnut-snack.jpg',
+      image: '/images/recipes/luteal-chamomile-walnut-snack.png',
       mealType: 'snack',
       servings: 1,
       prepTime: '5 min',
@@ -637,7 +637,7 @@ const RECIPES = {
     {
       id: 'luteal-congee-flareup',
       title: 'Simple Rice Porridge (Congee)',
-      image: '/images/recipes/luteal-congee-flareup.jpg',
+      image: '/images/recipes/luteal-congee-flareup.png',
       mealType: 'flareUp',
       servings: 2,
       prepTime: '5 min',

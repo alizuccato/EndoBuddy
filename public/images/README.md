@@ -3,8 +3,9 @@
 Drop your licensed photos here using this naming convention so they wire up
 automatically — no code changes needed:
 
-- Recipes:   /public/images/recipes/<phase>-<slug>.jpg
-- Exercises: /public/images/exercises/<phase>-<slug>.jpg
+- Recipes:   /public/images/recipes/<phase>-<slug>.png
+- Exercises: /public/images/exercises/<phase>-<slug>.jpg (or .png — just keep
+  the extension consistent with what src/data/premium-exercises.js expects)
 
 The exact filenames expected are listed as the `image` field of each entry in:
 - src/data/premium-recipes.js
