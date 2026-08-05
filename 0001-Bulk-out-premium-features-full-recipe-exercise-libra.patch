@@ -1,0 +1,1611 @@
+From 64cc2017782b30a47f3a6830c3fbe5cf8639af58 Mon Sep 17 00:00:00 2001
+From: Ali <ali@myendobuddy.com>
+Date: Tue, 4 Aug 2026 18:29:45 +0000
+Subject: [PATCH] Bulk out premium features: full recipe & exercise library per
+ phase
+
+- src/data/premium-recipes.js: 24 full recipes (6/phase) with images,
+  ingredients, quantities, and step-by-step instructions
+- src/data/premium-exercises.js: new phase-based movement library (3/phase)
+  with steps, benefits, equipment, and flare-day modifications
+- New PremiumExercises.jsx component + Exercises tab in Premium view
+- Rewrote PremiumMealPlans.jsx to show full expandable recipe cards
+  instead of short meal blurbs, keeping dietary filters/flare mode/
+  shopping list
+- New ImageWithFallback.jsx: gracefully falls back to a themed icon tile
+  until real photos are added under public/images/
+- public/images/README.md: naming convention for image assets
+---
+ public/images/README.md              |  18 +
+ src/App.jsx                          |   5 +-
+ src/components/ImageWithFallback.jsx |  28 ++
+ src/components/PremiumExercises.jsx  | 196 ++++++++
+ src/components/PremiumMealPlans.jsx  | 301 ++++++------
+ src/data/premium-exercises.js        | 229 +++++++++
+ src/data/premium-recipes.js          | 663 +++++++++++++++++++++++++++
+ 7 files changed, 1281 insertions(+), 159 deletions(-)
+ create mode 100644 public/images/README.md
+ create mode 100644 src/components/ImageWithFallback.jsx
+ create mode 100644 src/components/PremiumExercises.jsx
+ create mode 100644 src/data/premium-exercises.js
+ create mode 100644 src/data/premium-recipes.js
+
+diff --git a/public/images/README.md b/public/images/README.md
+new file mode 100644
+index 0000000..d5fb9af
+--- /dev/null
++++ b/public/images/README.md
+@@ -0,0 +1,18 @@
++# Image assets for Premium recipes & exercises
++
++Drop your licensed photos here using this naming convention so they wire up
++automatically — no code changes needed:
++
++- Recipes:   /public/images/recipes/<phase>-<slug>.jpg
++- Exercises: /public/images/exercises/<phase>-<slug>.jpg
++
++The exact filenames expected are listed as the `image` field of each entry in:
++- src/data/premium-recipes.js
++- src/data/premium-exercises.js
++
++Recommended size: ~800x600px (4:3) or 1200x800px (3:2), landscape, JPG or WEBP,
++under ~300KB each for fast mobile loading.
++
++Until a file exists at a given path, the app automatically shows a soft
++themed icon tile instead of a broken image — so it's safe to ship this
++feature before every photo is in place, and add them incrementally.
+diff --git a/src/App.jsx b/src/App.jsx
+index 3c5852a..aa28c3d 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -5,6 +5,7 @@ import OnboardingFlow from './components/OnboardingFlow'
+ import DoctorReport from './components/DoctorReport'
+ import ComfortMode from './components/ComfortMode'
+ import PremiumMealPlans from './components/PremiumMealPlans'
++import PremiumExercises from './components/PremiumExercises'
+ import PremiumDeepReport from './components/PremiumDeepReport'
+ import PremiumVisualizations from './components/PremiumVisualizations'
+ import SurgicalPlanningSummary from './components/SurgicalPlanningSummary'
+@@ -440,6 +441,7 @@ function ReportsView({ recentLogs, cycleData, patterns }) {
+ 
+ const LOCKED_FEATURE_COPY = {
+   meals: { icon: '\u{1F37D}', description: 'Unlock personalized phase-based meal plans tailored to your symptoms and cravings.' },
++  exercises: { icon: '\u{1F9D8}', description: 'Unlock a full phase-based movement library, with gentle modifications for flare days.' },
+   deep: { icon: '\u{1F4CA}', description: 'Unlock your AI-powered deep report, correlating pain, symptoms, and phase across your full history.' },
+   surgical: { icon: '\u{1F52C}', description: 'Unlock a lesion-mapped surgical planning summary to bring straight to your specialist.' },
+   treatment: { icon: '\u{1F48A}', description: 'Unlock your treatment response dashboard to see what\u2019s actually working over time.' },
+@@ -469,12 +471,13 @@ function PremiumView({ isPremium, onUpgrade, cycleData, patterns, userId }) {
+         :<button onClick={onUpgrade} className="bg-gradient-to-r from-endo-purple to-endo-pink text-white text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 shadow-md">Upgrade Now</button>}
+       </div>
+       <div className="flex gap-2 mb-6 border-b border-gray-100 pb-3 flex-wrap">
+-        {[{id:'meals',label:'Meal Plans',icon:'\u{1F37D}'},{id:'deep',label:'Deep Report',icon:'\u{1F4CA}'},{id:'surgical',label:'Surgical Plan',icon:'\u{1F52C}'},{id:'treatment',label:'Treatments',icon:'\u{1F48A}'},{id:'viz',label:'Visualizations',icon:'\u2728'}].map(tab=>(
++        {[{id:'meals',label:'Meal Plans',icon:'\u{1F37D}'},{id:'exercises',label:'Exercises',icon:'\u{1F9D8}'},{id:'deep',label:'Deep Report',icon:'\u{1F4CA}'},{id:'surgical',label:'Surgical Plan',icon:'\u{1F52C}'},{id:'treatment',label:'Treatments',icon:'\u{1F48A}'},{id:'viz',label:'Visualizations',icon:'\u2728'}].map(tab=>(
+           <button key={tab.id} onClick={()=>setPremiumTab(tab.id)}
+             className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl transition-all ${premiumTab===tab.id?'bg-endo-purple text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}><span>{tab.icon}</span><span>{tab.label}</span></button>
+         ))}
+       </div>
+       {premiumTab==='meals'&&(isPremium?<PremiumMealPlans currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="meals"/>)}
++      {premiumTab==='exercises'&&(isPremium?<PremiumExercises currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="exercises"/>)}
+       {premiumTab==='deep'&&(isPremium?<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={patterns}/></div>:<LockedFeature onUpgrade={onUpgrade} feature="deep"/>)}
+       {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns}/>:<LockedFeature onUpgrade={onUpgrade} feature="surgical"/>)}
+       {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard userId={userId}/>:<LockedFeature onUpgrade={onUpgrade} feature="treatment"/>)}
+diff --git a/src/components/ImageWithFallback.jsx b/src/components/ImageWithFallback.jsx
+new file mode 100644
+index 0000000..62f829b
+--- /dev/null
++++ b/src/components/ImageWithFallback.jsx
+@@ -0,0 +1,28 @@
++/**
++ * ImageWithFallback
++ *
++ * Renders an image if it loads successfully; otherwise renders a themed
++ * icon tile. This lets recipe/exercise cards reference image paths that
++ * don't exist yet (e.g. before Ali has uploaded real photos to /public)
++ * without ever showing a broken image icon.
++ */
++export default function ImageWithFallback({ src, alt, icon = '🌿', gradientFrom = 'from-endo-purple/15', gradientTo = 'to-endo-pink/15', className = '' }) {
++  return (
++    <div className={`relative overflow-hidden bg-gradient-to-br ${gradientFrom} ${gradientTo} ${className}`}>
++      <img
++        src={src}
++        alt={alt}
++        loading="lazy"
++        className="absolute inset-0 w-full h-full object-cover"
++        onError={(e) => {
++          e.currentTarget.style.display = 'none'
++          const fallback = e.currentTarget.nextSibling
++          if (fallback) fallback.style.display = 'flex'
++        }}
++      />
++      <div className="hidden absolute inset-0 items-center justify-center text-4xl" aria-hidden="true">
++        {icon}
++      </div>
++    </div>
++  )
++}
+diff --git a/src/components/PremiumExercises.jsx b/src/components/PremiumExercises.jsx
+new file mode 100644
+index 0000000..99f9ffe
+--- /dev/null
++++ b/src/components/PremiumExercises.jsx
+@@ -0,0 +1,196 @@
++/**
++ * PremiumExercises
++ *
++ * Phase-specific full exercise & movement library with intensity filtering.
++ * Content lives in src/data/premium-exercises.js — each entry has an image
++ * slot, equipment, step-by-step guidance, benefits, and a gentler modification
++ * for flare or high-pain days.
++ */
++
++import { useState, useMemo } from 'react'
++import { PHASE_STYLES } from '../utils/mockData'
++import EXERCISES from '../data/premium-exercises'
++import ImageWithFallback from './ImageWithFallback'
++
++const INTENSITY_FILTERS = [
++  { id: 'gentle', label: 'Gentle', icon: '🌙' },
++  { id: 'moderate', label: 'Moderate', icon: '🚶' },
++  { id: 'active', label: 'Active', icon: '🏃' },
++]
++
++const INTENSITY_ICON = { gentle: '🌙', moderate: '🚶', active: '🏃' }
++
++export default function PremiumExercises({ currentPhase, isPremium = true }) {
++  const [activeIntensity, setActiveIntensity] = useState(null)
++  const [expandedExercise, setExpandedExercise] = useState(null)
++  const [gentleDayMode, setGentleDayMode] = useState(false)
++
++  const phase = currentPhase || 'luteal'
++  const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
++  const allExercises = EXERCISES[phase] || EXERCISES.luteal
++
++  const visibleExercises = useMemo(() => {
++    let list = allExercises
++    if (gentleDayMode) list = list.filter(e => e.intensity === 'gentle')
++    else if (activeIntensity) list = list.filter(e => e.intensity === activeIntensity)
++    return list
++  }, [allExercises, activeIntensity, gentleDayMode])
++
++  if (!isPremium) {
++    return (
++      <div className="card text-center py-8">
++        <div className="text-5xl mb-3">⭐</div>
++        <h3 className="font-semibold text-gray-700 mb-2">Premium Feature</h3>
++        <p className="text-sm text-gray-500">Upgrade to Premium for the full phase-specific movement library.</p>
++      </div>
++    )
++  }
++
++  return (
++    <div className="card overflow-hidden">
++      {/* Phase Context Bar */}
++      <div className={`${phaseStyle.bg} -mx-6 -mt-6 px-6 py-3 mb-4 border-b ${phaseStyle.border}`}>
++        <div className="flex items-center justify-between">
++          <div>
++            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
++            <p className="text-sm text-gray-600 mt-0.5">{allExercises.length} movement guides for this phase</p>
++          </div>
++          <span className="bg-white/80 text-xs font-medium px-2 py-1 rounded-full text-endo-purple">⭐ Premium</span>
++        </div>
++      </div>
++
++      {/* Intensity Filters */}
++      <div className="flex flex-wrap gap-1.5 mb-4">
++        {INTENSITY_FILTERS.map(f => (
++          <button
++            key={f.id}
++            disabled={gentleDayMode}
++            onClick={() => setActiveIntensity(prev => prev === f.id ? null : f.id)}
++            className={`text-xs px-3 py-1.5 rounded-full transition-all flex items-center gap-1 ${
++              gentleDayMode ? 'opacity-40 cursor-not-allowed bg-gray-100 text-gray-400' :
++              activeIntensity === f.id
++                ? 'bg-endo-purple text-white'
++                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
++            }`}
++          >
++            <span>{f.icon}</span>{f.label}
++          </button>
++        ))}
++      </div>
++
++      {/* Gentle Day Mode Toggle */}
++      <div className="flex items-center justify-between mb-4 p-3 bg-amber-50/50 rounded-xl border border-amber-100">
++        <div className="flex items-center gap-2">
++          <span className="text-lg">🩹</span>
++          <div>
++            <p className="text-sm font-medium text-amber-800">Gentle Day Mode</p>
++            <p className="text-xs text-amber-600">Show only the gentlest, flare-friendly options</p>
++          </div>
++        </div>
++        <button
++          onClick={() => setGentleDayMode(prev => !prev)}
++          className={`relative w-12 h-6 rounded-full transition-colors ${gentleDayMode ? 'bg-amber-500' : 'bg-gray-300'}`}
++        >
++          <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${gentleDayMode ? 'translate-x-6' : 'translate-x-0.5'}`} />
++        </button>
++      </div>
++
++      {/* Exercise Cards */}
++      <div className="space-y-3">
++        {visibleExercises.map(exercise => {
++          const isExpanded = expandedExercise === exercise.id
++          return (
++            <div key={exercise.id} className="border border-gray-100 rounded-xl overflow-hidden">
++              <button
++                onClick={() => setExpandedExercise(isExpanded ? null : exercise.id)}
++                className="w-full flex items-center gap-3 px-3 py-3 hover:bg-gray-50 transition-colors text-left"
++              >
++                <ImageWithFallback
++                  src={exercise.image}
++                  alt={exercise.title}
++                  icon={INTENSITY_ICON[exercise.intensity] || '🌿'}
++                  className="w-14 h-14 rounded-lg flex-shrink-0"
++                />
++                <div className="flex-1 min-w-0">
++                  <p className="font-medium text-sm text-gray-800 truncate">{exercise.title}</p>
++                  <p className="text-xs text-gray-500 mt-0.5">{exercise.duration} · <span className="capitalize">{exercise.intensity}</span></p>
++                </div>
++                <svg className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
++                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
++                </svg>
++              </button>
++
++              {isExpanded && (
++                <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
++                  <ImageWithFallback
++                    src={exercise.image}
++                    alt={exercise.title}
++                    icon={INTENSITY_ICON[exercise.intensity] || '🌿'}
++                    className="w-full h-40 rounded-lg"
++                  />
++
++                  <p className="text-xs text-gray-500 leading-relaxed">{exercise.description}</p>
++
++                  <div className="flex flex-wrap gap-4 text-xs text-gray-500">
++                    <span>⏱️ {exercise.duration}</span>
++                    <span className="capitalize">{INTENSITY_ICON[exercise.intensity]} {exercise.intensity}</span>
++                  </div>
++
++                  {exercise.equipment?.length > 0 && (
++                    <div>
++                      <p className="text-xs font-semibold text-gray-700 mb-1">What you'll need</p>
++                      <div className="flex flex-wrap gap-1.5">
++                        {exercise.equipment.map(item => (
++                          <span key={item} className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{item}</span>
++                        ))}
++                      </div>
++                    </div>
++                  )}
++
++                  <div>
++                    <p className="text-xs font-semibold text-gray-700 mb-1.5">Steps</p>
++                    <ol className="space-y-1.5">
++                      {exercise.steps?.map((step, idx) => (
++                        <li key={idx} className="text-xs text-gray-600 leading-relaxed flex gap-2">
++                          <span className="font-semibold text-endo-purple flex-shrink-0">{idx + 1}.</span>
++                          <span>{step}</span>
++                        </li>
++                      ))}
++                    </ol>
++                  </div>
++
++                  {exercise.benefits?.length > 0 && (
++                    <div className="bg-gray-50 rounded-lg p-3">
++                      <p className="text-xs font-semibold text-gray-700 mb-1">Benefits</p>
++                      <ul className="space-y-0.5">
++                        {exercise.benefits.map(b => (
++                          <li key={b} className="text-xs text-gray-500 flex gap-1.5">
++                            <span className="text-endo-purple">•</span><span>{b}</span>
++                          </li>
++                        ))}
++                      </ul>
++                    </div>
++                  )}
++
++                  {exercise.gentleModification && (
++                    <div className="bg-amber-50/60 border border-amber-100 rounded-lg p-3">
++                      <p className="text-xs font-semibold text-amber-800 mb-1">🩹 Gentle day modification</p>
++                      <p className="text-xs text-amber-700 leading-relaxed">{exercise.gentleModification}</p>
++                    </div>
++                  )}
++                </div>
++              )}
++            </div>
++          )
++        })}
++        {visibleExercises.length === 0 && (
++          <p className="text-sm text-gray-400 text-center py-6">No exercises match the current filter.</p>
++        )}
++      </div>
++
++      <p className="text-[11px] text-gray-400 italic leading-relaxed mt-4">
++        These are general wellness suggestions, not medical advice. Stop any movement that increases pain and check with your care team before starting a new routine, especially post-surgery.
++      </p>
++    </div>
++  )
++}
+diff --git a/src/components/PremiumMealPlans.jsx b/src/components/PremiumMealPlans.jsx
+index 471c97a..523a088 100644
+--- a/src/components/PremiumMealPlans.jsx
++++ b/src/components/PremiumMealPlans.jsx
+@@ -1,150 +1,79 @@
+ /**
+  * PremiumMealPlans
+- * 
+- * Phase-specific dynamic meal planning with dietary filters and Flare-Up Mode.
+- * Uses domain-validated content from meal-suggestions.md.
+- * Features: Phase context bar, dietary filters, menu cards, flare-up toggle, shopping list.
++ *
++ * Phase-specific full recipe library with dietary filters and Flare-Up Mode.
++ * Content lives in src/data/premium-recipes.js — each recipe has an image slot,
++ * full ingredient list with amounts, and step-by-step instructions.
++ * Features: Phase context bar, dietary filters, flare-up toggle, expandable
++ * full-recipe cards, shopping list generator.
+  */
+ 
+ import { useState, useCallback, useMemo } from 'react'
+ import { PHASE_STYLES } from '../utils/mockData'
+-
+-const PHASE_MEALS = {
+-  menstrual: {
+-    focus: 'Rest, hydration, anti-inflammatory & iron-rich foods',
+-    meals: {
+-      breakfast: { name: 'Warm Oatmeal with Berries & Flaxseed', why: 'Oats provide sustained energy; flaxseed adds omega-3s for inflammation.', ingredients: ['Rolled oats', 'Mixed berries', 'Ground flaxseed', 'Honey'] },
+-      lunch: { name: 'Kale & Salmon Salad with Avocado', why: 'Salmon is rich in omega-3s; kale provides iron lost during menstruation.', ingredients: ['Kale', 'Salmon fillet', 'Avocado', 'Olive oil', 'Lemon'] },
+-      dinner: { name: 'Sweet Potato & Lentil Curry', why: 'Sweet potatoes are rich in magnesium; lentils provide iron and fiber.', ingredients: ['Sweet potato', 'Red lentils', 'Coconut milk', 'Curry powder', 'Onion', 'Garlic'] },
+-      snack: [
+-        { name: 'Dark Chocolate (70%+)', why: 'Magnesium-rich — helps with cramping.', ingredients: ['Dark chocolate (70%+)'] },
+-        { name: 'Warm Ginger Tea', why: 'Ginger has anti-inflammatory properties.', ingredients: ['Fresh ginger root', 'Honey'] },
+-      ],
+-    },
+-    flareUp: {
+-      breakfast: { name: 'Simple Bone Broth with Soft Rice', why: 'Warm, easy-to-digest, and soothing for the gut.', ingredients: ['Bone broth', 'White rice'] },
+-      lunch: { name: 'Stewed Apples with Cinnamon', why: 'Gentle on the stomach; cinnamon helps regulate blood sugar.', ingredients: ['Apples', 'Cinnamon'] },
+-      dinner: { name: 'Butternut Squash Soup (Blended)', why: 'Warm, low-residue, and full of vitamin A for recovery.', ingredients: ['Butternut squash', 'Vegetable broth', 'Fresh ginger'] },
+-      snack: [
+-        { name: 'Herbal Chamomile Tea', why: 'Calms the nervous system and supports sleep.', ingredients: ['Chamomile tea bags'] },
+-      ],
+-    },
+-  },
+-  follicular: {
+-    focus: 'Energy building, iron-rich foods, light movement',
+-    meals: {
+-      breakfast: { name: 'Green Smoothie Bowl', why: 'Spinach provides iron; banana gives quick energy for rising estrogen.', ingredients: ['Spinach', 'Banana', 'Almond milk', 'Chia seeds'] },
+-      lunch: { name: 'Quinoa & Chickpea Salad with Lemon', why: 'Quinoa is a complete protein; lemon aids iron absorption.', ingredients: ['Quinoa', 'Chickpeas', 'Lemon', 'Cucumber', 'Olive oil'] },
+-      dinner: { name: 'Grilled Chicken with Roasted Veggies', why: 'Lean protein supports tissue repair; colorful veggies provide antioxidants.', ingredients: ['Chicken breast', 'Bell peppers', 'Zucchini', 'Olive oil'] },
+-      snack: [
+-        { name: 'Handful of Almonds', why: 'Vitamin E supports endometrial health.', ingredients: ['Almonds'] },
+-        { name: 'Fresh Orange', why: 'Vitamin C boosts immune system.', ingredients: ['Orange'] },
+-      ],
+-    },
+-    flareUp: null,
+-  },
+-  ovulatory: {
+-    focus: 'Fiber-rich, liver-supporting foods for estrogen metabolism',
+-    meals: {
+-      breakfast: { name: 'Chia Pudding with Berries', why: 'Chia seeds are high in fiber and omega-3s.', ingredients: ['Chia seeds', 'Almond milk', 'Mixed berries'] },
+-      lunch: { name: 'Broccoli & Tofu Stir-fry', why: 'Broccoli supports liver detoxification of excess estrogen.', ingredients: ['Broccoli', 'Tofu', 'Soy sauce', 'Garlic', 'Fresh ginger'] },
+-      dinner: { name: 'Grilled Mackerel with Asparagus', why: 'Mackerel is rich in vitamin D; asparagus supports hormone balance.', ingredients: ['Mackerel fillet', 'Asparagus', 'Lemon', 'Olive oil'] },
+-      snack: [
+-        { name: 'Hummus with Crudités', why: 'Fiber-rich vegetables support gut health and estrogen metabolism.', ingredients: ['Hummus', 'Carrots', 'Celery', 'Bell pepper'] },
+-      ],
+-    },
+-    flareUp: null,
+-  },
+-  luteal: {
+-    focus: 'Magnesium, complex carbs, mood-stabilizing foods',
+-    meals: {
+-      breakfast: { name: 'Sweet Potato & Egg Scramble', why: 'Complex carbs boost serotonin; eggs provide B6 for hormone balance.', ingredients: ['Sweet potato', 'Eggs', 'Spinach'] },
+-      lunch: { name: 'Warm Quinoa Bowl with Roasted Veggies', why: 'Quinoa is magnesium-rich; warm food comforts the nervous system.', ingredients: ['Quinoa', 'Carrots', 'Zucchini', 'Olive oil'] },
+-      dinner: { name: 'Wild Salmon with Kale & Sweet Potato', why: 'Omega-3s reduce prostaglandins; kale supports estrogen clearance.', ingredients: ['Wild salmon fillet', 'Kale', 'Sweet potato'] },
+-      snack: [
+-        { name: 'Pumpkin Seeds', why: 'High in magnesium and zinc for hormone support.', ingredients: ['Pumpkin seeds'] },
+-        { name: 'Dark Chocolate', why: 'Magnesium and mood-boosting compounds.', ingredients: ['Dark chocolate (70%+)'] },
+-      ],
+-    },
+-    flareUp: {
+-      breakfast: { name: 'Simple Rice Porridge (Congee)', why: 'Warm, easily digestible, and grounding.', ingredients: ['White rice', 'Vegetable broth', 'Fresh ginger'] },
+-      lunch: { name: 'Mashed Potato with Bone Broth', why: 'Gentle on digestion; warming and nourishing.', ingredients: ['Potatoes', 'Bone broth'] },
+-      dinner: { name: 'Steamed Fish with Zucchini Noodles', why: 'Light but nutrient-dense; easy on the gut.', ingredients: ['White fish fillet', 'Zucchini'] },
+-      snack: [
+-        { name: 'Chamomile & Peppermint Tea', why: 'Calming for both mood and digestion.', ingredients: ['Chamomile tea bags', 'Peppermint tea bags'] },
+-      ],
+-    },
+-  },
+-}
++import RECIPES from '../data/premium-recipes'
++import ImageWithFallback from './ImageWithFallback'
+ 
+ const DIETARY_FILTERS = ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free']
+ 
+-// Nut-Free runtime substitutions for phase meals containing nuts
+-const NUT_FREE_SUBSTITUTIONS = {
+-  follicular: {
+-    snack: [
+-      { name: 'Sunflower Seed & Date Bites', why: 'Seeds provide vitamin E for endometrial health without nuts.', ingredients: ['Sunflower seeds', 'Dates'] },
+-      { name: 'Fresh Orange', why: 'Vitamin C boosts immune system.', ingredients: ['Orange'] }
+-    ]
+-  },
+-  luteal: {
+-    snack: [
+-      { name: 'Dark Chocolate (verify nut-free)', why: 'Most 70%+ dark chocolate is nut-free. Pair with dried fruit instead of nuts.', ingredients: ['Dark chocolate (70%+)', 'Dried fruit'] },
+-      { name: 'Roasted Chickpeas with Sea Salt', why: 'Crunchy, magnesium-rich, and naturally nut-free.', ingredients: ['Chickpeas', 'Olive oil', 'Sea salt'] }
+-    ]
+-  }
+-}
++const MEAL_TYPE_ORDER = ['breakfast', 'lunch', 'dinner', 'snack', 'flareUp']
++const MEAL_TYPE_ICON = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍪', flareUp: '🔥' }
++const MEAL_TYPE_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snacks', flareUp: 'Flare-Up Friendly' }
+ 
+ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+   const [flareMode, setFlareMode] = useState(false)
+   const [activeFilters, setActiveFilters] = useState([])
+-  const [expandedMeal, setExpandedMeal] = useState(null)
++  const [expandedRecipe, setExpandedRecipe] = useState(null)
+   const [showShoppingList, setShowShoppingList] = useState(false)
+   const [checkedItems, setCheckedItems] = useState({})
+   const [copied, setCopied] = useState(false)
+ 
+   const phase = currentPhase || 'luteal'
+   const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
+-  const phaseData = PHASE_MEALS[phase] || PHASE_MEALS.luteal
++  const allRecipes = RECIPES[phase] || RECIPES.luteal
+ 
+   const toggleFilter = useCallback((filter) => {
+     setActiveFilters(prev => prev.includes(filter) ? prev.filter(f => f !== filter) : [...prev, filter])
+   }, [])
+ 
+-  // Apply nut-free filter to meals by swapping nut-containing items
+-  const getFilteredMeals = useCallback((mealsData) => {
+-    if (!activeFilters.includes('Nut-Free')) return mealsData
+-    const phaseLower = (currentPhase || 'luteal').toLowerCase()
+-    const subs = NUT_FREE_SUBSTITUTIONS[phaseLower]
+-    if (!subs) return mealsData
++  // Apply dietary + flare-mode filters
++  const visibleRecipes = useMemo(() => {
++    let list = allRecipes
+ 
+-    const filtered = { ...mealsData }
+-    for (const [mealType, replacements] of Object.entries(subs)) {
+-      if (filtered[mealType]) {
+-        filtered[mealType] = replacements
+-      }
++    if (flareMode) {
++      const flareFriendly = list.filter(r => r.mealType === 'flareUp' || r.tags?.includes('flare-friendly') || r.tags?.includes('easy-to-digest'))
++      list = flareFriendly.length > 0 ? flareFriendly : list.filter(r => r.mealType !== 'flareUp')
++    } else {
++      list = list.filter(r => r.mealType !== 'flareUp')
+     }
+-    return filtered
+-  }, [activeFilters, currentPhase])
+ 
+-  const meals = getFilteredMeals(flareMode && phaseData.flareUp ? phaseData.flareUp : phaseData.meals)
++    if (activeFilters.length > 0) {
++      list = list.filter(r => activeFilters.every(f => r.tags?.includes(f)))
++    }
+ 
+-  // Build a deduplicated shopping list from whatever meals are currently
+-  // displayed (respects flare mode + active filters, so the list always
+-  // matches what's on screen).
++    return list
++  }, [allRecipes, flareMode, activeFilters])
++
++  const groupedRecipes = useMemo(() => {
++    const groups = {}
++    for (const recipe of visibleRecipes) {
++      const key = recipe.mealType || 'snack'
++      if (!groups[key]) groups[key] = []
++      groups[key].push(recipe)
++    }
++    return groups
++  }, [visibleRecipes])
++
++  // Deduplicated shopping list built from whatever recipes are currently visible
+   const shoppingList = useMemo(() => {
+-    const seen = new Map() // lowercase name -> display name
+-    for (const mealData of Object.values(meals)) {
+-      const items = Array.isArray(mealData) ? mealData : [mealData]
+-      for (const item of items) {
+-        for (const ingredient of item.ingredients || []) {
+-          const key = ingredient.trim().toLowerCase()
+-          if (!seen.has(key)) seen.set(key, ingredient.trim())
+-        }
++    const seen = new Map() // lowercase item -> "amount item" display string
++    for (const recipe of visibleRecipes) {
++      for (const ing of recipe.ingredients || []) {
++        const key = ing.item.trim().toLowerCase()
++        if (!seen.has(key)) seen.set(key, `${ing.amount ? ing.amount + ' ' : ''}${ing.item}`)
+       }
+     }
+     return Array.from(seen.values()).sort((a, b) => a.localeCompare(b))
+-  }, [meals])
++  }, [visibleRecipes])
+ 
+   const handleGenerateShoppingList = useCallback(() => {
+     setCheckedItems({})
+@@ -172,7 +101,7 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+       <div className="card text-center py-8">
+         <div className="text-5xl mb-3">⭐</div>
+         <h3 className="font-semibold text-gray-700 mb-2">Premium Feature</h3>
+-        <p className="text-sm text-gray-500">Upgrade to Premium for personalized phase-specific meal plans.</p>
++        <p className="text-sm text-gray-500">Upgrade to Premium for the full phase-specific recipe library.</p>
+       </div>
+     )
+   }
+@@ -184,7 +113,7 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+         <div className="flex items-center justify-between">
+           <div>
+             <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
+-            <p className="text-sm text-gray-600 mt-0.5">{phaseData.focus}</p>
++            <p className="text-sm text-gray-600 mt-0.5">{allRecipes.length} full recipes for this phase</p>
+           </div>
+           <span className="bg-white/80 text-xs font-medium px-2 py-1 rounded-full text-endo-purple">⭐ Premium</span>
+         </div>
+@@ -213,7 +142,7 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+           <span className="text-lg">🔥</span>
+           <div>
+             <p className="text-sm font-medium text-amber-800">Flare-Up Mode</p>
+-            <p className="text-xs text-amber-600">Ultra-gentle, easy-to-digest options</p>
++            <p className="text-xs text-amber-600">Ultra-gentle, easy-to-digest recipes</p>
+           </div>
+         </div>
+         <button
+@@ -224,46 +153,102 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+         </button>
+       </div>
+ 
+-      {/* Meal Cards */}
+-      <div className="space-y-3">
+-        {Object.entries(meals).map(([mealType, mealData]) => {
+-          if (mealType === 'flareUp') return null
+-          const isExpanded = expandedMeal === mealType
+-          const items = Array.isArray(mealData) ? mealData : [mealData]
+-          
+-          return (
+-            <div key={mealType} className="border border-gray-100 rounded-xl overflow-hidden">
+-              <button
+-                onClick={() => setExpandedMeal(isExpanded ? null : mealType)}
+-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+-              >
+-                <div className="flex items-center gap-3">
+-                  <span className="text-lg">
+-                    {mealType === 'breakfast' ? '🌅' : mealType === 'lunch' ? '☀️' : mealType === 'dinner' ? '🌙' : '🍪'}
+-                  </span>
+-                  <span className="font-medium text-sm text-gray-800 capitalize">{mealType}</span>
+-                </div>
+-                <div className="flex items-center gap-2">
+-                  <span className="text-xs text-gray-500">{items.length} item{items.length > 1 ? 's' : ''}</span>
+-                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+-                  </svg>
+-                </div>
+-              </button>
+-              
+-              {isExpanded && (
+-                <div className="px-4 pb-3 space-y-2">
+-                  {items.map((item, idx) => (
+-                    <div key={idx} className="bg-gray-50 rounded-lg p-3">
+-                      <p className="text-sm font-medium text-gray-800">{item.name}</p>
+-                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">{item.why}</p>
+-                    </div>
+-                  ))}
+-                </div>
+-              )}
++      {/* Recipe Groups */}
++      <div className="space-y-5">
++        {MEAL_TYPE_ORDER.filter(type => groupedRecipes[type]?.length).map(mealType => (
++          <div key={mealType}>
++            <div className="flex items-center gap-2 mb-2">
++              <span className="text-base">{MEAL_TYPE_ICON[mealType]}</span>
++              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{MEAL_TYPE_LABEL[mealType]}</span>
+             </div>
+-          )
+-        })}
++            <div className="space-y-3">
++              {groupedRecipes[mealType].map(recipe => {
++                const isExpanded = expandedRecipe === recipe.id
++                return (
++                  <div key={recipe.id} className="border border-gray-100 rounded-xl overflow-hidden">
++                    <button
++                      onClick={() => setExpandedRecipe(isExpanded ? null : recipe.id)}
++                      className="w-full flex items-center gap-3 px-3 py-3 hover:bg-gray-50 transition-colors text-left"
++                    >
++                      <ImageWithFallback
++                        src={recipe.image}
++                        alt={recipe.title}
++                        icon={MEAL_TYPE_ICON[recipe.mealType] || '🌿'}
++                        className="w-14 h-14 rounded-lg flex-shrink-0"
++                      />
++                      <div className="flex-1 min-w-0">
++                        <p className="font-medium text-sm text-gray-800 truncate">{recipe.title}</p>
++                        <p className="text-xs text-gray-500 mt-0.5">{recipe.prepTime} prep · {recipe.servings} serving{recipe.servings > 1 ? 's' : ''}</p>
++                      </div>
++                      <svg className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
++                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
++                      </svg>
++                    </button>
++
++                    {isExpanded && (
++                      <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
++                        <ImageWithFallback
++                          src={recipe.image}
++                          alt={recipe.title}
++                          icon={MEAL_TYPE_ICON[recipe.mealType] || '🌿'}
++                          className="w-full h-40 rounded-lg"
++                        />
++
++                        <div className="flex flex-wrap gap-1.5">
++                          {recipe.tags?.map(tag => (
++                            <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{tag}</span>
++                          ))}
++                        </div>
++
++                        <div className="flex gap-4 text-xs text-gray-500">
++                          <span>⏱️ Prep {recipe.prepTime}</span>
++                          <span>🔥 Cook {recipe.cookTime}</span>
++                          <span>🍽️ Serves {recipe.servings}</span>
++                        </div>
++
++                        <div className="bg-gray-50 rounded-lg p-3">
++                          <p className="text-xs font-semibold text-gray-700 mb-1">Why it helps</p>
++                          <p className="text-xs text-gray-500 leading-relaxed">{recipe.whyItHelps}</p>
++                        </div>
++
++                        <div>
++                          <p className="text-xs font-semibold text-gray-700 mb-1.5">Ingredients</p>
++                          <ul className="space-y-1">
++                            {recipe.ingredients?.map((ing, idx) => (
++                              <li key={idx} className="text-xs text-gray-600 flex justify-between gap-2">
++                                <span>{ing.item}</span>
++                                <span className="text-gray-400 whitespace-nowrap">{ing.amount}</span>
++                              </li>
++                            ))}
++                          </ul>
++                        </div>
++
++                        <div>
++                          <p className="text-xs font-semibold text-gray-700 mb-1.5">Steps</p>
++                          <ol className="space-y-1.5">
++                            {recipe.steps?.map((step, idx) => (
++                              <li key={idx} className="text-xs text-gray-600 leading-relaxed flex gap-2">
++                                <span className="font-semibold text-endo-purple flex-shrink-0">{idx + 1}.</span>
++                                <span>{step}</span>
++                              </li>
++                            ))}
++                          </ol>
++                        </div>
++
++                        {recipe.nutritionNotes && (
++                          <p className="text-[11px] text-gray-400 italic leading-relaxed">{recipe.nutritionNotes}</p>
++                        )}
++                      </div>
++                    )}
++                  </div>
++                )
++              })}
++            </div>
++          </div>
++        ))}
++        {visibleRecipes.length === 0 && (
++          <p className="text-sm text-gray-400 text-center py-6">No recipes match the current filters.</p>
++        )}
+       </div>
+ 
+       {/* Shopping List Generator */}
+@@ -279,7 +264,7 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+           <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
+             <div>
+               <p className="text-sm font-semibold text-gray-800">Shopping List</p>
+-              <p className="text-[10px] text-gray-500">{shoppingList.length} item{shoppingList.length !== 1 ? 's' : ''} for today's {phaseStyle.label.toLowerCase()} meals</p>
++              <p className="text-[10px] text-gray-500">{shoppingList.length} item{shoppingList.length !== 1 ? 's' : ''} for the {phaseStyle.label.toLowerCase()} recipes shown</p>
+             </div>
+             <div className="flex items-center gap-2">
+               <button
+diff --git a/src/data/premium-exercises.js b/src/data/premium-exercises.js
+new file mode 100644
+index 0000000..fa7993c
+--- /dev/null
++++ b/src/data/premium-exercises.js
+@@ -0,0 +1,229 @@
++/**
++ * premium-exercises.js
++ *
++ * Full movement & exercise library for the Premium Exercises feature, organized
++ * by cycle phase. Each entry includes an image slot, intensity, duration, a full
++ * description, step-by-step guidance, benefits, and a gentler modification for
++ * flare or high-pain days.
++ *
++ * IMAGES: `image` is a path under /public that Ali will supply. Until a real file
++ * exists at that path, the UI falls back to a themed icon tile (see
++ * ImageWithFallback in PremiumExercises.jsx). Suggested convention:
++ * /images/exercises/<phase>-<slug>.jpg (e.g. /images/exercises/luteal-yin-yoga.jpg).
++ *
++ * intensity: 'gentle' | 'moderate' | 'active'
++ */
++
++const EXERCISES = {
++  menstrual: [
++    {
++      id: 'menstrual-restorative-yoga',
++      title: 'Restorative Yoga for Cramp Relief',
++      image: '/images/exercises/menstrual-restorative-yoga.jpg',
++      duration: '15-20 min',
++      intensity: 'gentle',
++      equipment: ['Yoga mat', 'Pillow or bolster', 'Weighted or regular blanket'],
++      description: 'A slow, floor-based sequence designed to lower cortisol, release pelvic tension, and give the nervous system permission to rest during the heaviest days of the cycle.',
++      steps: [
++        "Supported Child's Pose: Kneel with a pillow under your belly and chest, arms relaxed forward or by your sides. Hold for 5–6 minutes, breathing slowly into your lower back.",
++        'Legs-Up-The-Wall: Lie on your back with your hips close to a wall and legs extended up it. Hold for 5–8 minutes to encourage pelvic blood flow and reduce swelling.',
++        'Savasana with Weighted Blanket: Lie flat with a weighted or folded blanket over the lower abdomen. Let your breath lengthen naturally for 5 minutes.',
++      ],
++      benefits: ['Lowers cortisol', 'Releases pelvic tension', 'Encourages parasympathetic (rest-and-digest) activation'],
++      gentleModification: 'On the heaviest pain days, skip Legs-Up-The-Wall and simply stay in Savasana with the weighted blanket for the full session.',
++    },
++    {
++      id: 'menstrual-heat-breathwork',
++      title: 'Heat & Breath Cramp Relief',
++      image: '/images/exercises/menstrual-heat-breathwork.jpg',
++      duration: '10 min',
++      intensity: 'gentle',
++      equipment: ['Heating pad or hot water bottle'],
++      description: 'A simple combination of heat application and slow diaphragmatic breathing to help ease cramping and calm the nervous system when energy is at its lowest.',
++      steps: [
++        'Lie down comfortably and place a heating pad on your lower abdomen or lower back.',
++        'Place one hand on your belly and one on your chest. Inhale slowly through the nose for a count of 4, letting the belly rise.',
++        'Exhale slowly through the mouth for a count of 6–8, letting the belly fall.',
++        'Continue for 8–10 rounds, keeping the heat in place throughout.',
++      ],
++      benefits: ['Relaxes uterine muscle', 'Increases local blood flow', 'Activates the vagus nerve to reduce pain signaling'],
++      gentleModification: 'Can be done seated in a reclined chair if lying down is uncomfortable.',
++    },
++    {
++      id: 'menstrual-gentle-walk',
++      title: 'Gentle 10-Minute Walk',
++      image: '/images/exercises/menstrual-gentle-walk.jpg',
++      duration: '10 min',
++      intensity: 'gentle',
++      equipment: ['Comfortable shoes'],
++      description: 'Light movement, even in small doses, can ease cramping by increasing circulation without demanding much from a body that\u2019s already working hard.',
++      steps: [
++        'Step outside or walk indoors at a slow, comfortable pace.',
++        'Focus on relaxed shoulders and easy breathing rather than pace or distance.',
++        'Stop and rest at any point if cramping increases.',
++      ],
++      benefits: ['Increases circulation', 'Eases bloating', 'Gentle mood boost from light activity and daylight'],
++      gentleModification: 'Skip entirely on flare days — rest is just as valid a choice during menstruation.',
++    },
++  ],
++
++  follicular: [
++    {
++      id: 'follicular-strength-training',
++      title: 'Strength Training (Moderate)',
++      image: '/images/exercises/follicular-strength-training.jpg',
++      duration: '20-30 min',
++      intensity: 'moderate',
++      equipment: ['Dumbbells or resistance bands (optional)', 'Mat'],
++      description: 'Rising estrogen in the follicular phase supports muscle repair and strength gains, making this a great window to build or maintain strength training.',
++      steps: [
++        'Warm up with 3–5 minutes of light cardio or dynamic stretching.',
++        'Perform 2–3 sets of 8–12 reps each of: bodyweight squats, walking lunges, push-ups (or knee push-ups), and glute bridges.',
++        'Rest 60–90 seconds between sets.',
++        'Cool down with 5 minutes of gentle stretching, focusing on hips and shoulders.',
++      ],
++      benefits: ['Builds muscle and bone density', 'Supports metabolism', 'Takes advantage of rising estrogen for recovery'],
++      gentleModification: 'Reduce to bodyweight-only exercises and 1–2 sets if energy is lower than expected.',
++    },
++    {
++      id: 'follicular-morning-walk-sunlight',
++      title: 'Energizing Morning Walk + Sunlight',
++      image: '/images/exercises/follicular-morning-walk-sunlight.jpg',
++      duration: '20 min',
++      intensity: 'gentle',
++      equipment: ['Comfortable shoes'],
++      description: 'A brisk outdoor walk within 30 minutes of waking pairs rising energy with morning light exposure, which helps anchor circadian rhythm and mood.',
++      steps: [
++        'Head outside within 30 minutes of waking, if possible.',
++        'Walk at a brisk, comfortable pace for 20 minutes, letting sunlight reach your face and arms (sunscreen is fine).',
++        'Breathe deeply and notice your surroundings rather than checking your phone.',
++      ],
++      benefits: ['Anchors circadian rhythm', 'Boosts mood and energy', 'Supports healthy cortisol rhythm'],
++      gentleModification: 'On cooler or rainy days, sit by a bright window for 10–15 minutes instead.',
++    },
++    {
++      id: 'follicular-gut-ritual-movement',
++      title: 'Gut-Nourishing Morning Ritual',
++      image: '/images/exercises/follicular-gut-ritual-movement.jpg',
++      duration: '5 min',
++      intensity: 'gentle',
++      equipment: ['Warm water', 'Lemon'],
++      description: 'A short morning ritual pairing hydration and gentle movement to support digestion as energy and appetite begin to rise.',
++      steps: [
++        'Start the day with a glass of warm water with lemon.',
++        'Follow with 5 slow standing side bends and torso twists to gently wake up digestion.',
++        'Pair with a probiotic-rich food (sauerkraut, kimchi, or kefir if tolerated) at breakfast.',
++      ],
++      benefits: ['Supports digestion', 'Gentle spinal mobility', 'Sets a calm tone for the day'],
++      gentleModification: 'Movement can be done seated if standing is uncomfortable.',
++    },
++  ],
++
++  ovulatory: [
++    {
++      id: 'ovulatory-moderate-cardio',
++      title: 'Moderate Cardio (Listen to Your Body)',
++      image: '/images/exercises/ovulatory-moderate-cardio.jpg',
++      duration: '20-30 min',
++      intensity: 'active',
++      equipment: ['Comfortable shoes', 'Bike or pool, optional'],
++      description: 'Energy and estrogen typically peak around ovulation, making this a good window for cardio — but ovulation pain (mittelschmerz) is common, so this is designed to flex with how you feel.',
++      steps: [
++        'Choose brisk walking, cycling, swimming, or light jogging.',
++        'Warm up for 3–5 minutes at an easy pace.',
++        'Sustain a moderate effort — you should be able to hold a conversation — for 20–30 minutes.',
++        'Cool down with 3–5 minutes of easy movement and light stretching.',
++      ],
++      benefits: ['Cardiovascular conditioning', 'Endorphin release', 'Supports healthy circulation during peak estrogen'],
++      gentleModification: 'If ovulation-side pain is present, switch to swimming or a slow walk and shorten to 10–15 minutes.',
++    },
++    {
++      id: 'ovulatory-hip-opening-flow',
++      title: 'Hip-Opening Yoga Flow',
++      image: '/images/exercises/ovulatory-hip-opening-flow.jpg',
++      duration: '15-20 min',
++      intensity: 'moderate',
++      equipment: ['Yoga mat', 'Pillow or block (optional)'],
++      description: 'A gentle flow to release tension around the hips and pelvis, useful if ovulation brings one-sided pinching or aching pain.',
++      steps: [
++        'Move through 3–4 rounds of gentle sun salutations to warm the body.',
++        "Lizard Pose: Step one foot forward outside the hands, lower the back knee, and hold for 3–5 breaths each side.",
++        "Supported Pigeon Pose: Place a pillow under the front hip for support and hold for 3–5 breaths each side.",
++        'Finish with slow hip circles on hands and knees, 5 in each direction.',
++      ],
++      benefits: ['Releases hip and pelvic tension', 'Improves mobility', 'Can ease one-sided ovulation pain'],
++      gentleModification: 'Skip Pigeon Pose entirely and stay with gentle hip circles if there is sharp or one-sided pain.',
++    },
++    {
++      id: 'ovulatory-hydration-electrolyte-walk',
++      title: 'Hydration-Focused Recovery Walk',
++      image: '/images/exercises/ovulatory-hydration-electrolyte-walk.jpg',
++      duration: 'Throughout the day',
++      intensity: 'gentle',
++      equipment: ['Water bottle', 'Electrolytes or a pinch of sea salt'],
++      description: 'Ovulation increases fluid needs. This pairs steady hydration with light movement breaks spread through the day rather than one long session.',
++      steps: [
++        'Aim for 6–8 glasses of water across the day, plus herbal teas like nettle, raspberry leaf, or peppermint.',
++        'Add a pinch of sea salt to one glass of water for electrolyte support.',
++        'Take three 5-minute walking breaks through the day — after meals works well.',
++      ],
++      benefits: ['Supports hydration status', 'Breaks up sedentary time', 'Gentle, sustainable movement'],
++      gentleModification: 'Replace walking breaks with standing stretches if mobility is limited that day.',
++    },
++  ],
++
++  luteal: [
++    {
++      id: 'luteal-yin-yoga',
++      title: 'Gentle Yin Yoga or Restorative Stretching',
++      image: '/images/exercises/luteal-yin-yoga.jpg',
++      duration: '20-30 min',
++      intensity: 'gentle',
++      equipment: ['Yoga mat', 'Pillow or bolster'],
++      description: 'Long-held floor poses that calm the nervous system as progesterone rises and PMS symptoms can build — good for both body and mood.',
++      steps: [
++        "Butterfly Pose: Sit with the soles of the feet together, knees relaxed out to the sides. Hold for 2–3 minutes, breathing slowly.",
++        "Child's Pose: Sink hips back toward the heels with arms extended forward. Hold for 2–3 minutes.",
++        'Legs-Up-The-Wall: Hold for 3–5 minutes to ease lower body tension and support circulation.',
++        'Gentle Spinal Twist: Lying on your back, drop both knees to one side, arms out in a T. Hold 2–3 minutes each side.',
++      ],
++      benefits: ['Calms the nervous system', 'Eases PMS-related tension', 'Supports better sleep'],
++      gentleModification: 'Use pillows generously under knees and hips in every pose — the goal is complete relaxation, not a deep stretch.',
++    },
++    {
++      id: 'luteal-evening-wind-down',
++      title: 'Evening Wind-Down Protocol',
++      image: '/images/exercises/luteal-evening-wind-down.jpg',
++      duration: '1-2 hours before bed',
++      intensity: 'gentle',
++      equipment: ['Journal (optional)', 'Chamomile or lavender tea'],
++      description: 'A structured wind-down routine to support the sleep quality that\u2019s often disrupted by rising progesterone and PMS symptoms in the luteal phase.',
++      steps: [
++        'Dim household lights around 8 PM to support melatonin production.',
++        'Avoid screens after 9 PM, or use blue-light filtering if unavoidable.',
++        'Make a warm cup of chamomile or lavender tea.',
++        'Spend 5 minutes journaling or doing slow, gentle breathing before bed.',
++      ],
++      benefits: ['Supports melatonin production', 'Reduces evening anxiety and PMS irritability', 'Improves sleep onset'],
++      gentleModification: 'If journaling feels like too much, simply sit quietly with the tea and focus on breath for a few minutes instead.',
++    },
++    {
++      id: 'luteal-comfort-first-movement',
++      title: 'Comfort-First Movement: Walking or Swimming',
++      image: '/images/exercises/luteal-comfort-first-movement.jpg',
++      duration: '20 min',
++      intensity: 'gentle',
++      equipment: ['Comfortable shoes, or swimwear'],
++      description: 'Light, low-impact movement that supports mood and bloating without adding stress to a body that may already be sensitive to pelvic pressure.',
++      steps: [
++        'Choose a 20-minute walk at a comfortable pace, or gentle swimming in warm water.',
++        'Keep effort easy and conversational throughout.',
++        'Stop immediately if you notice any increase in pelvic pressure or pain.',
++      ],
++      benefits: ['Eases bloating', 'Mood support without overexertion', 'Low-impact on sensitive days'],
++      gentleModification: 'Replace with 10 minutes of seated gentle stretching if walking or swimming isn\u2019t accessible that day.',
++    },
++  ],
++}
++
++export default EXERCISES
+diff --git a/src/data/premium-recipes.js b/src/data/premium-recipes.js
+new file mode 100644
+index 0000000..a1ad8ea
+--- /dev/null
++++ b/src/data/premium-recipes.js
+@@ -0,0 +1,663 @@
++/**
++ * premium-recipes.js
++ *
++ * Full recipe library for the Premium Meal Plans feature, organized by cycle phase.
++ * Each recipe includes an image slot, complete ingredient list with amounts, and
++ * step-by-step instructions — this is the "full recipe" content shown when a
++ * Premium user expands a meal card.
++ *
++ * IMAGES: `image` is a path under /public that Ali will supply. Until a real file
++ * exists at that path, the UI automatically falls back to a themed icon tile
++ * (see ImageWithFallback in PremiumMealPlans.jsx) so nothing looks broken.
++ * Suggested convention: /images/recipes/<phase>-<slug>.jpg (e.g.
++ * /images/recipes/menstrual-turmeric-oatmeal.jpg), roughly 800x600, landscape.
++ *
++ * Dietary tags drive the filter chips in PremiumMealPlans: 'Vegan', 'Vegetarian',
++ * 'Gluten-Free', 'Dairy-Free', 'Nut-Free'.
++ */
++
++const RECIPES = {
++  menstrual: [
++    {
++      id: 'menstrual-turmeric-oatmeal',
++      title: 'Warm Turmeric Oatmeal',
++      image: '/images/recipes/menstrual-turmeric-oatmeal.jpg',
++      mealType: 'breakfast',
++      servings: 1,
++      prepTime: '5 min',
++      cookTime: '5 min',
++      tags: ['Vegetarian', 'Gluten-Free', 'warm', 'iron-rich', 'anti-inflammatory'],
++      whyItHelps: 'Oats provide steady energy; cinnamon and turmeric are anti-inflammatory; pumpkin seeds provide iron and magnesium. The warmth soothes the body during cramping.',
++      ingredients: [
++        { item: 'Rolled oats', amount: '1/2 cup' },
++        { item: 'Water or oat milk', amount: '1 cup' },
++        { item: 'Ground turmeric', amount: '1/4 tsp' },
++        { item: 'Ground cinnamon', amount: '1/2 tsp' },
++        { item: 'Banana, sliced', amount: '1/2' },
++        { item: 'Pumpkin seeds', amount: '1 tbsp' },
++        { item: 'Honey or maple syrup', amount: '1 tsp' },
++      ],
++      steps: [
++        'Combine oats and water (or oat milk) in a small pot over medium heat.',
++        'Stir in the turmeric and cinnamon, then simmer for 4–5 minutes, stirring occasionally, until creamy.',
++        'Pour into a bowl and top with sliced banana and pumpkin seeds.',
++        'Drizzle with honey or maple syrup and serve warm.',
++      ],
++      nutritionNotes: 'Rich in soluble fiber, iron, and magnesium — supportive during the heaviest flow days.',
++    },
++    {
++      id: 'menstrual-red-lentil-soup',
++      title: 'Red Lentil & Ginger Soup',
++      image: '/images/recipes/menstrual-red-lentil-soup.jpg',
++      mealType: 'lunch',
++      servings: 4,
++      prepTime: '10 min',
++      cookTime: '25 min',
++      tags: ['Vegan', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'warm', 'iron-rich', 'anti-inflammatory'],
++      whyItHelps: 'Lentils replenish iron lost during menstruation; ginger and turmeric help calm prostaglandin-driven inflammation; the warm broth is easy to digest.',
++      ingredients: [
++        { item: 'Red lentils, rinsed', amount: '1 cup' },
++        { item: 'Fresh ginger, grated', amount: '1 tbsp' },
++        { item: 'Garlic, minced', amount: '2 cloves' },
++        { item: 'Ground turmeric', amount: '1 tsp' },
++        { item: 'Vegetable broth', amount: '4 cups' },
++        { item: 'Baby spinach', amount: '2 cups' },
++        { item: 'Olive oil', amount: '1 tbsp' },
++        { item: 'Salt and pepper', amount: 'to taste' },
++      ],
++      steps: [
++        'Warm the olive oil in a large pot over medium heat and sauté garlic and ginger for 1 minute, until fragrant.',
++        'Add lentils, turmeric, and broth. Bring to a boil, then reduce heat and simmer for 18–20 minutes until lentils are soft.',
++        'Stir in spinach and cook for another 2 minutes until wilted.',
++        'Season with salt and pepper, and serve warm.',
++      ],
++      nutritionNotes: 'A great make-ahead soup — freezes well in individual portions for flare days.',
++    },
++    {
++      id: 'menstrual-grilled-salmon',
++      title: 'Grilled Salmon with Sweet Potato & Greens',
++      image: '/images/recipes/menstrual-grilled-salmon.jpg',
++      mealType: 'dinner',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '25 min',
++      tags: ['Gluten-Free', 'Dairy-Free', 'Nut-Free', 'omega-3-rich', 'iron-rich', 'anti-inflammatory'],
++      whyItHelps: 'Salmon provides omega-3 fatty acids that help combat inflammation; sweet potatoes offer complex carbohydrates for sustained energy; leafy greens add iron and magnesium.',
++      ingredients: [
++        { item: 'Wild salmon fillets', amount: '2 (about 6 oz each)' },
++        { item: 'Sweet potatoes, cubed', amount: '2 medium' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++        { item: 'Kale or spinach', amount: '3 cups' },
++        { item: 'Garlic, minced', amount: '1 clove' },
++        { item: 'Lemon', amount: '1' },
++        { item: 'Salt and pepper', amount: 'to taste' },
++      ],
++      steps: [
++        'Preheat oven to 400°F (200°C). Toss sweet potato cubes with 1 tbsp olive oil, salt, and pepper; roast for 20–25 minutes, flipping halfway.',
++        'Season salmon fillets with salt, pepper, and a squeeze of lemon. Pan-sear or grill for 4–5 minutes per side until cooked through.',
++        'In a skillet, warm the remaining olive oil and sauté garlic and greens for 2–3 minutes until just wilted.',
++        'Plate the salmon with roasted sweet potato and sautéed greens; finish with a lemon wedge.',
++      ],
++      nutritionNotes: 'One of the most omega-3 dense meals in the library — helpful for prostaglandin balance.',
++    },
++    {
++      id: 'menstrual-magnesium-smoothie',
++      title: 'Magnesium-Rich Smoothie Bowl',
++      image: '/images/recipes/menstrual-magnesium-smoothie.jpg',
++      mealType: 'snack',
++      servings: 1,
++      prepTime: '5 min',
++      cookTime: '0 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'magnesium-rich', 'quick', 'mood-support'],
++      whyItHelps: 'Bananas, spinach, cacao, and almonds are all rich in magnesium, which helps relax uterine muscle and can ease cramping.',
++      ingredients: [
++        { item: 'Frozen banana', amount: '1' },
++        { item: 'Baby spinach', amount: '1 cup' },
++        { item: 'Almond milk (or oat milk for nut-free)', amount: '1/2 cup' },
++        { item: 'Unsweetened cacao powder', amount: '1 tbsp' },
++        { item: 'Almonds, chopped (or sunflower seeds for nut-free)', amount: '1 tbsp' },
++        { item: 'Chia seeds', amount: '1 tsp' },
++        { item: 'Dark chocolate shavings', amount: '1 tsp' },
++      ],
++      steps: [
++        'Blend the frozen banana, spinach, almond milk, and cacao powder until smooth and thick.',
++        'Pour into a bowl.',
++        'Top with chopped almonds (or sunflower seeds), chia seeds, and dark chocolate shavings.',
++      ],
++      nutritionNotes: 'Swap almonds for sunflower seeds or pumpkin seeds to make this fully nut-free.',
++    },
++    {
++      id: 'menstrual-bone-broth-tofu',
++      title: 'Bone Broth with Soft Tofu & Greens',
++      image: '/images/recipes/menstrual-bone-broth-tofu.jpg',
++      mealType: 'snack',
++      servings: 2,
++      prepTime: '5 min',
++      cookTime: '10 min',
++      tags: ['Gluten-Free', 'Dairy-Free', 'Nut-Free', 'warm', 'easy-to-digest', 'comforting'],
++      whyItHelps: 'Bone broth is hydrating and mineral-rich; soft tofu provides easy-to-digest protein; ginger settles the stomach — a gentle option on heavier flow days.',
++      ingredients: [
++        { item: 'Bone broth or mineral-rich vegetable broth', amount: '3 cups' },
++        { item: 'Silken tofu, cubed', amount: '1 cup' },
++        { item: 'Bok choy, chopped', amount: '1 cup' },
++        { item: 'Fresh ginger, sliced', amount: '1 tsp' },
++        { item: 'Coconut aminos', amount: '1 tsp' },
++      ],
++      steps: [
++        'Bring the broth to a gentle simmer with the sliced ginger for 5 minutes.',
++        'Add bok choy and simmer for 2 minutes until just tender.',
++        'Gently stir in the silken tofu and warm through for 1–2 minutes without boiling.',
++        'Finish with a splash of coconut aminos and serve warm.',
++      ],
++      nutritionNotes: 'A gentle, low-effort option for days when appetite is low.',
++    },
++    {
++      id: 'menstrual-golden-milk-chia',
++      title: 'Golden Milk Chia Pudding',
++      image: '/images/recipes/menstrual-golden-milk-chia.jpg',
++      mealType: 'snack',
++      servings: 2,
++      prepTime: '5 min (+ overnight chill)',
++      cookTime: '0 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'anti-inflammatory', 'make-ahead'],
++      whyItHelps: 'Turmeric and black pepper combine for anti-inflammatory support, while chia seeds provide omega-3s and a satisfying, fiber-rich texture that\u2019s gentle on digestion.',
++      ingredients: [
++        { item: 'Chia seeds', amount: '1/4 cup' },
++        { item: 'Coconut milk (or oat milk)', amount: '1 cup' },
++        { item: 'Ground turmeric', amount: '1/2 tsp' },
++        { item: 'Ground cinnamon', amount: '1/4 tsp' },
++        { item: 'Black pepper', amount: 'pinch' },
++        { item: 'Maple syrup', amount: '1 tbsp' },
++      ],
++      steps: [
++        'Whisk together the coconut milk, turmeric, cinnamon, black pepper, and maple syrup in a jar.',
++        'Stir in the chia seeds until well combined.',
++        'Cover and refrigerate overnight (or at least 4 hours) until thickened.',
++        'Stir once more before serving; top with fresh fruit if desired.',
++      ],
++      nutritionNotes: 'A pinch of black pepper significantly boosts turmeric\u2019s absorption.',
++    },
++  ],
++
++  follicular: [
++    {
++      id: 'follicular-green-detox-smoothie',
++      title: 'Green Detox Smoothie',
++      image: '/images/recipes/follicular-green-detox-smoothie.jpg',
++      mealType: 'breakfast',
++      servings: 1,
++      prepTime: '5 min',
++      cookTime: '0 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'iron-rich', 'quick'],
++      whyItHelps: 'Spinach delivers iron to help rebuild stores after menstruation; frozen berries add antioxidants; flaxseed supports healthy estrogen metabolism as it begins to rise.',
++      ingredients: [
++        { item: 'Baby spinach', amount: '1 cup' },
++        { item: 'Frozen mixed berries', amount: '1 cup' },
++        { item: 'Ground flaxseed', amount: '1 tbsp' },
++        { item: 'Plant-based protein powder', amount: '1 scoop' },
++        { item: 'Unsweetened almond milk (or oat milk for nut-free)', amount: '1 cup' },
++      ],
++      steps: [
++        'Add all ingredients to a blender.',
++        'Blend on high for 45–60 seconds until smooth and creamy.',
++        'Add more almond milk to thin if needed, and serve immediately.',
++      ],
++      nutritionNotes: 'A quick grab-and-go option for the rising-energy days of the follicular phase.',
++    },
++    {
++      id: 'follicular-cruciferous-power-bowl',
++      title: 'Cruciferous Power Bowl',
++      image: '/images/recipes/follicular-cruciferous-power-bowl.jpg',
++      mealType: 'lunch',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '25 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'fiber-rich', 'estrogen-support'],
++      whyItHelps: 'Broccoli, cauliflower, and Brussels sprouts contain compounds that support healthy estrogen metabolism; chickpeas and quinoa add protein and fiber for sustained energy.',
++      ingredients: [
++        { item: 'Broccoli florets', amount: '1 cup' },
++        { item: 'Cauliflower florets', amount: '1 cup' },
++        { item: 'Brussels sprouts, halved', amount: '1 cup' },
++        { item: 'Cooked quinoa', amount: '1 1/2 cups' },
++        { item: 'Chickpeas, drained and rinsed', amount: '1 cup' },
++        { item: 'Tahini', amount: '2 tbsp' },
++        { item: 'Lemon juice', amount: '1 tbsp' },
++        { item: 'Pumpkin seeds', amount: '2 tbsp' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++      ],
++      steps: [
++        'Preheat oven to 425°F (220°C). Toss broccoli, cauliflower, and Brussels sprouts with olive oil, salt, and pepper.',
++        'Roast for 20–25 minutes, tossing halfway, until edges are golden.',
++        'Whisk tahini with lemon juice and a splash of water to make a pourable dressing.',
++        'Divide quinoa between bowls, top with roasted vegetables and chickpeas, drizzle with dressing, and finish with pumpkin seeds.',
++      ],
++      nutritionNotes: 'The cruciferous vegetables here are a staple for supporting the liver\u2019s role in estrogen clearance.',
++    },
++    {
++      id: 'follicular-citrus-herb-chicken',
++      title: 'Citrus & Herb Grilled Chicken',
++      image: '/images/recipes/follicular-citrus-herb-chicken.jpg',
++      mealType: 'dinner',
++      servings: 2,
++      prepTime: '15 min (+ marinating)',
++      cookTime: '20 min',
++      tags: ['Gluten-Free', 'Dairy-Free', 'Nut-Free', 'protein-rich'],
++      whyItHelps: 'Lean protein supports tissue repair as the body rebuilds the uterine lining; wild rice and asparagus add complex carbs and folate to support rising estrogen.',
++      ingredients: [
++        { item: 'Chicken breast', amount: '2 (6 oz each)' },
++        { item: 'Lemon juice', amount: '2 tbsp' },
++        { item: 'Garlic, minced', amount: '2 cloves' },
++        { item: 'Dried oregano', amount: '1 tsp' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++        { item: 'Asparagus, trimmed', amount: '1 bunch' },
++        { item: 'Wild rice, cooked', amount: '1 1/2 cups' },
++      ],
++      steps: [
++        'Whisk lemon juice, garlic, oregano, and 1 tbsp olive oil; marinate chicken for at least 20 minutes (up to 2 hours).',
++        'Grill or pan-sear chicken for 6–7 minutes per side until cooked through.',
++        'Toss asparagus with remaining olive oil and roast at 400°F (200°C) for 10–12 minutes, or grill alongside the chicken.',
++        'Serve chicken over wild rice with roasted asparagus on the side.',
++      ],
++      nutritionNotes: 'A high-protein dinner that supports the energy-building phase of the cycle.',
++    },
++    {
++      id: 'follicular-fermented-avocado-toast',
++      title: 'Fermented Veggie & Avocado Toast',
++      image: '/images/recipes/follicular-fermented-avocado-toast.jpg',
++      mealType: 'breakfast',
++      servings: 1,
++      prepTime: '10 min',
++      cookTime: '5 min',
++      tags: ['Vegetarian', 'gut-health', 'quick'],
++      whyItHelps: 'Fermented vegetables support a healthy gut microbiome, which plays a role in estrogen metabolism; avocado and egg add healthy fats and protein for lasting fullness.',
++      ingredients: [
++        { item: 'Sourdough or gluten-free bread', amount: '2 slices' },
++        { item: 'Avocado', amount: '1' },
++        { item: 'Sauerkraut or kimchi', amount: '1/4 cup' },
++        { item: 'Egg', amount: '1' },
++        { item: 'Chili flakes', amount: 'pinch' },
++        { item: 'Salt and pepper', amount: 'to taste' },
++      ],
++      steps: [
++        'Toast the bread until golden.',
++        'Mash the avocado with a pinch of salt and pepper, then spread over the toast.',
++        'Poach or fry the egg to your liking.',
++        'Top the toast with sauerkraut (or kimchi), the egg, and a pinch of chili flakes.',
++      ],
++      nutritionNotes: 'For gluten-free, swap in a gluten-free bread; sauerkraut is naturally dairy-free and nut-free.',
++    },
++    {
++      id: 'follicular-warm-quinoa-roasted-veggie',
++      title: 'Warm Quinoa & Roasted Veggie Bowl',
++      image: '/images/recipes/follicular-warm-quinoa-roasted-veggie.jpg',
++      mealType: 'lunch',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '30 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'iron-rich'],
++      whyItHelps: 'Beets support liver detoxification pathways involved in hormone clearance, while quinoa provides plant-based protein and iron to keep energy climbing through the phase.',
++      ingredients: [
++        { item: 'Beets, cubed', amount: '2 medium' },
++        { item: 'Carrots, sliced', amount: '2' },
++        { item: 'Red onion, sliced', amount: '1/2' },
++        { item: 'Cooked quinoa', amount: '1 1/2 cups' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++        { item: 'Lemon juice', amount: '1 tbsp' },
++        { item: 'Fresh herbs (parsley or dill)', amount: '2 tbsp, chopped' },
++      ],
++      steps: [
++        'Preheat oven to 400°F (200°C). Toss beets, carrots, and red onion with olive oil, salt, and pepper.',
++        'Roast for 25–30 minutes until tender and slightly caramelized.',
++        'Whisk together lemon juice and remaining olive oil for a simple vinaigrette.',
++        'Spoon quinoa into bowls, top with roasted vegetables, drizzle with vinaigrette, and finish with fresh herbs.',
++      ],
++      nutritionNotes: 'Roast a double batch of beets — they keep well in the fridge for 4–5 days.',
++    },
++    {
++      id: 'follicular-almond-orange-energy-bites',
++      title: 'Almond & Orange Energy Bites',
++      image: '/images/recipes/follicular-almond-orange-energy-bites.jpg',
++      mealType: 'snack',
++      servings: 6,
++      prepTime: '15 min',
++      cookTime: '0 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'make-ahead', 'vitamin-e-rich'],
++      whyItHelps: 'Almonds provide vitamin E, which supports endometrial health, while orange zest adds vitamin C to boost iron absorption from the day\u2019s other meals.',
++      ingredients: [
++        { item: 'Almonds', amount: '1 cup' },
++        { item: 'Pitted dates', amount: '1 cup' },
++        { item: 'Orange zest', amount: '1 tsp' },
++        { item: 'Orange juice', amount: '1 tbsp' },
++        { item: 'Shredded coconut (optional, for rolling)', amount: '2 tbsp' },
++      ],
++      steps: [
++        'Pulse almonds in a food processor until finely chopped.',
++        'Add dates, orange zest, and orange juice; process until the mixture sticks together when pressed.',
++        'Roll into 12 small balls, optionally coating in shredded coconut.',
++        'Refrigerate for at least 30 minutes to firm up. Store in the fridge for up to a week.',
++      ],
++      nutritionNotes: 'Not nut-free — swap almonds for sunflower seeds if needed.',
++    },
++  ],
++
++  ovulatory: [
++    {
++      id: 'ovulatory-antioxidant-berry-bowl',
++      title: 'Antioxidant Berry & Seed Bowl',
++      image: '/images/recipes/ovulatory-antioxidant-berry-bowl.jpg',
++      mealType: 'breakfast',
++      servings: 1,
++      prepTime: '5 min',
++      cookTime: '0 min',
++      tags: ['Vegetarian', 'Gluten-Free', 'antioxidant-rich', 'quick'],
++      whyItHelps: 'A mix of berries provides antioxidants that support cells at their most metabolically active point in the cycle; chia and walnuts add omega-3s for hormone balance.',
++      ingredients: [
++        { item: 'Coconut or plant-based yogurt', amount: '3/4 cup' },
++        { item: 'Blueberries', amount: '1/4 cup' },
++        { item: 'Raspberries', amount: '1/4 cup' },
++        { item: 'Blackberries', amount: '1/4 cup' },
++        { item: 'Chia seeds', amount: '1 tsp' },
++        { item: 'Walnuts, chopped (omit for nut-free)', amount: '1 tbsp' },
++      ],
++      steps: [
++        'Spoon the yogurt into a bowl.',
++        'Top with mixed berries.',
++        'Sprinkle with chia seeds and chopped walnuts.',
++      ],
++      nutritionNotes: 'Omit walnuts or swap for pumpkin seeds for a nut-free version.',
++    },
++    {
++      id: 'ovulatory-roasted-beet-chickpea-bowl',
++      title: 'Roasted Beet & Chickpea Buddha Bowl',
++      image: '/images/recipes/ovulatory-roasted-beet-chickpea-bowl.jpg',
++      mealType: 'lunch',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '30 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'fiber-rich'],
++      whyItHelps: 'Fiber from beets, chickpeas, and greens supports healthy elimination of excess estrogen at its peak; avocado adds healthy fats for hormone production.',
++      ingredients: [
++        { item: 'Beets, cubed', amount: '2 medium' },
++        { item: 'Chickpeas, drained and rinsed', amount: '1 cup' },
++        { item: 'Cooked quinoa', amount: '1 1/2 cups' },
++        { item: 'Avocado, sliced', amount: '1' },
++        { item: 'Mixed greens', amount: '2 cups' },
++        { item: 'Tahini', amount: '2 tbsp' },
++        { item: 'Lemon juice', amount: '1 tbsp' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++      ],
++      steps: [
++        'Preheat oven to 400°F (200°C). Toss beets and chickpeas with olive oil, salt, and pepper.',
++        'Roast for 25–30 minutes, until beets are tender and chickpeas are slightly crisp.',
++        'Whisk tahini, lemon juice, and a splash of water into a smooth dressing.',
++        'Assemble bowls with greens, quinoa, roasted beets and chickpeas, and avocado. Drizzle with dressing.',
++      ],
++      nutritionNotes: 'A colorful, fiber-forward bowl that keeps well for meal prep.',
++    },
++    {
++      id: 'ovulatory-turmeric-tempeh-stirfry',
++      title: 'Turmeric Tempeh Stir-Fry',
++      image: '/images/recipes/ovulatory-turmeric-tempeh-stirfry.jpg',
++      mealType: 'dinner',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '15 min',
++      tags: ['Vegan', 'Vegetarian', 'Dairy-Free', 'Nut-Free', 'anti-inflammatory', 'protein-rich'],
++      whyItHelps: 'Tempeh offers plant protein and gut-friendly fermentation; turmeric and ginger add anti-inflammatory support in case ovulation pain (mittelschmerz) is present.',
++      ingredients: [
++        { item: 'Tempeh, cubed', amount: '8 oz' },
++        { item: 'Broccoli florets', amount: '1 cup' },
++        { item: 'Bell peppers, sliced', amount: '1 cup' },
++        { item: 'Snap peas', amount: '1 cup' },
++        { item: 'Fresh ginger, grated', amount: '1 tbsp' },
++        { item: 'Garlic, minced', amount: '2 cloves' },
++        { item: 'Ground turmeric', amount: '1 tsp' },
++        { item: 'Tamari or soy sauce', amount: '2 tbsp' },
++        { item: 'Cooked brown rice', amount: '2 cups' },
++      ],
++      steps: [
++        'Heat a splash of oil in a wok or large skillet over medium-high heat. Sear tempeh cubes for 4–5 minutes until golden; set aside.',
++        'In the same pan, sauté garlic and ginger for 30 seconds, then add broccoli, peppers, and snap peas.',
++        'Stir-fry vegetables for 4–5 minutes until crisp-tender, then stir in turmeric and tamari.',
++        'Return tempeh to the pan, toss to combine, and serve over brown rice.',
++      ],
++      nutritionNotes: 'If ovulation pain is present, this recipe pairs well with a heating pad and the gentler yoga flow below.',
++    },
++    {
++      id: 'ovulatory-zesty-shrimp-avocado-salad',
++      title: 'Zesty Shrimp & Avocado Salad',
++      image: '/images/recipes/ovulatory-zesty-shrimp-avocado-salad.jpg',
++      mealType: 'lunch',
++      servings: 2,
++      prepTime: '15 min',
++      cookTime: '8 min',
++      tags: ['Gluten-Free', 'Dairy-Free', 'Nut-Free', 'protein-rich', 'light'],
++      whyItHelps: 'A light, protein-rich salad that matches the higher energy and social appetite common in the ovulatory window, with healthy fats from avocado for hormone production.',
++      ingredients: [
++        { item: 'Shrimp, peeled and deveined', amount: '1 lb' },
++        { item: 'Mixed greens', amount: '4 cups' },
++        { item: 'Avocado, sliced', amount: '1' },
++        { item: 'Cherry tomatoes, halved', amount: '1 cup' },
++        { item: 'Cucumber, sliced', amount: '1' },
++        { item: 'Lime juice', amount: '2 tbsp' },
++        { item: 'Fresh cilantro, chopped', amount: '2 tbsp' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++      ],
++      steps: [
++        'Season shrimp with salt and pepper, then grill or pan-sear for 2–3 minutes per side until pink and opaque.',
++        'Whisk lime juice, olive oil, and cilantro for the dressing.',
++        'Toss mixed greens, tomatoes, and cucumber together, then top with warm shrimp and avocado.',
++        'Drizzle with the lime-cilantro dressing and serve.',
++      ],
++      nutritionNotes: 'Swap shrimp for grilled tofu or tempeh for a vegetarian version.',
++    },
++    {
++      id: 'ovulatory-pumpkin-seed-pesto-pasta',
++      title: 'Zinc-Rich Pumpkin Seed Pesto Pasta',
++      image: '/images/recipes/ovulatory-pumpkin-seed-pesto-pasta.jpg',
++      mealType: 'dinner',
++      servings: 3,
++      prepTime: '10 min',
++      cookTime: '12 min',
++      tags: ['Vegetarian', 'Nut-Free', 'zinc-rich'],
++      whyItHelps: 'Pumpkin seeds are rich in zinc, which supports ovulation and immune function; basil and olive oil round out an easy weeknight dinner.',
++      ingredients: [
++        { item: 'Whole grain or gluten-free pasta', amount: '12 oz' },
++        { item: 'Pumpkin seeds', amount: '1/2 cup' },
++        { item: 'Fresh basil', amount: '2 cups, packed' },
++        { item: 'Garlic', amount: '2 cloves' },
++        { item: 'Parmesan (or nutritional yeast for dairy-free)', amount: '1/3 cup' },
++        { item: 'Olive oil', amount: '1/2 cup' },
++        { item: 'Salt and pepper', amount: 'to taste' },
++      ],
++      steps: [
++        'Cook pasta according to package directions; reserve 1/2 cup pasta water before draining.',
++        'In a food processor, blend pumpkin seeds, basil, garlic, and parmesan (or nutritional yeast) until finely chopped.',
++        'With the processor running, slowly stream in olive oil until a smooth pesto forms. Season with salt and pepper.',
++        'Toss the warm pasta with the pesto, adding reserved pasta water as needed to loosen. Serve immediately.',
++      ],
++      nutritionNotes: 'Use gluten-free pasta and nutritional yeast for a fully gluten-free, dairy-free version.',
++    },
++    {
++      id: 'ovulatory-hummus-crudite',
++      title: 'Hummus with Crudités',
++      image: '/images/recipes/ovulatory-hummus-crudite.jpg',
++      mealType: 'snack',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '0 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'fiber-rich'],
++      whyItHelps: 'Fiber-rich vegetables and chickpea-based hummus support gut health and estrogen metabolism during the estrogen peak of ovulation.',
++      ingredients: [
++        { item: 'Hummus', amount: '1/2 cup' },
++        { item: 'Carrots, cut into sticks', amount: '2' },
++        { item: 'Celery, cut into sticks', amount: '2 stalks' },
++        { item: 'Bell pepper, sliced', amount: '1' },
++      ],
++      steps: [
++        'Arrange the carrot, celery, and bell pepper sticks on a plate.',
++        'Serve with hummus for dipping.',
++      ],
++      nutritionNotes: 'Make a double batch of hummus and keep it on hand for 3–4 days of easy snacking.',
++    },
++  ],
++
++  luteal: [
++    {
++      id: 'luteal-sweet-potato-spinach-hash',
++      title: 'Sweet Potato & Spinach Breakfast Hash',
++      image: '/images/recipes/luteal-sweet-potato-spinach-hash.jpg',
++      mealType: 'breakfast',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '20 min',
++      tags: ['Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'complex-carbs', 'B6-rich'],
++      whyItHelps: 'Complex carbs from sweet potato support serotonin production as progesterone rises; eggs (or tofu) provide B6, which can help ease PMS mood symptoms.',
++      ingredients: [
++        { item: 'Sweet potatoes, diced', amount: '2 medium' },
++        { item: 'Baby spinach', amount: '2 cups' },
++        { item: 'Onion, diced', amount: '1/2' },
++        { item: 'Bell pepper, diced', amount: '1/2' },
++        { item: 'Eggs (or tofu scramble)', amount: '2' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++        { item: 'Salt and pepper', amount: 'to taste' },
++      ],
++      steps: [
++        'Heat olive oil in a skillet over medium heat. Add sweet potato and cook for 10–12 minutes, stirring occasionally, until tender.',
++        'Add onion and bell pepper; cook for another 4–5 minutes until softened.',
++        'Stir in spinach and cook until wilted, about 1–2 minutes.',
++        'Push the hash to one side, crack in the eggs, and cook to your liking (or fold in a tofu scramble). Season and serve.',
++      ],
++      nutritionNotes: 'A warming, savory breakfast that supports steady blood sugar through the luteal phase.',
++    },
++    {
++      id: 'luteal-chocolate-cherry-oats',
++      title: 'Dark Chocolate & Cherry Overnight Oats',
++      image: '/images/recipes/luteal-chocolate-cherry-oats.jpg',
++      mealType: 'breakfast',
++      servings: 1,
++      prepTime: '5 min (+ overnight chill)',
++      cookTime: '0 min',
++      tags: ['Vegetarian', 'Gluten-Free', 'magnesium-rich', 'mood-support', 'make-ahead'],
++      whyItHelps: 'Tart cherries and cacao offer mood-supportive compounds and magnesium, which can help ease PMS irritability and support sleep quality.',
++      ingredients: [
++        { item: 'Rolled oats', amount: '1/2 cup' },
++        { item: 'Almond milk (or oat milk for nut-free)', amount: '1/2 cup' },
++        { item: 'Cacao powder', amount: '1 tbsp' },
++        { item: 'Tart cherries, chopped', amount: '1/4 cup' },
++        { item: 'Chia seeds', amount: '1 tsp' },
++        { item: 'Almond butter (or sunflower seed butter)', amount: '1 tbsp' },
++      ],
++      steps: [
++        'Combine oats, almond milk, cacao powder, and chia seeds in a jar and stir well.',
++        'Fold in the chopped tart cherries.',
++        'Cover and refrigerate overnight.',
++        'In the morning, top with a dollop of almond butter (or sunflower seed butter) before eating.',
++      ],
++      nutritionNotes: 'A great meal-prep option — make 3–4 jars at once for the week.',
++    },
++    {
++      id: 'luteal-salmon-roasted-veg-plate',
++      title: 'Warm Salmon & Roasted Vegetable Plate',
++      image: '/images/recipes/luteal-salmon-roasted-veg-plate.jpg',
++      mealType: 'dinner',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '25 min',
++      tags: ['Gluten-Free', 'Dairy-Free', 'Nut-Free', 'omega-3-rich', 'estrogen-support'],
++      whyItHelps: 'Omega-3s from salmon help reduce prostaglandin production ahead of the next cycle; kale supports estrogen clearance as progesterone begins to fall.',
++      ingredients: [
++        { item: 'Wild salmon fillets', amount: '2 (6 oz each)' },
++        { item: 'Sweet potatoes, cubed', amount: '2 medium' },
++        { item: 'Brussels sprouts, halved', amount: '2 cups' },
++        { item: 'Kale, stemmed and chopped', amount: '2 cups' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++        { item: 'Lemon', amount: '1' },
++        { item: 'Salt and pepper', amount: 'to taste' },
++      ],
++      steps: [
++        'Preheat oven to 400°F (200°C). Toss sweet potato and Brussels sprouts with olive oil, salt, and pepper; roast for 22–25 minutes.',
++        'Season salmon with salt, pepper, and lemon; bake or pan-sear for 10–12 minutes until just cooked through.',
++        'Steam the kale for 2–3 minutes until bright green and tender, then toss with a squeeze of lemon.',
++        'Plate the salmon with roasted vegetables and steamed kale.',
++      ],
++      nutritionNotes: 'This meal pairs well with the evening wind-down routine below on higher-PMS evenings.',
++    },
++    {
++      id: 'luteal-magnesium-buddha-bowl',
++      title: 'Magnesium-Boosted Buddha Bowl',
++      image: '/images/recipes/luteal-magnesium-buddha-bowl.jpg',
++      mealType: 'lunch',
++      servings: 2,
++      prepTime: '10 min',
++      cookTime: '25 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'magnesium-rich'],
++      whyItHelps: 'Sweet potato, black beans, and pumpkin seeds are all magnesium sources that can help ease PMS muscle tension and support mood stability.',
++      ingredients: [
++        { item: 'Sweet potato, cubed', amount: '1 large' },
++        { item: 'Cooked quinoa', amount: '1 1/2 cups' },
++        { item: 'Black beans, drained and rinsed', amount: '1 cup' },
++        { item: 'Avocado, sliced', amount: '1' },
++        { item: 'Pumpkin seeds', amount: '2 tbsp' },
++        { item: 'Lime juice', amount: '1 tbsp' },
++        { item: 'Fresh cilantro', amount: '2 tbsp, chopped' },
++        { item: 'Olive oil', amount: '2 tbsp' },
++      ],
++      steps: [
++        'Preheat oven to 400°F (200°C). Toss sweet potato cubes with olive oil, salt, and pepper; roast for 20–25 minutes.',
++        'Whisk lime juice with a little olive oil, salt, and cilantro for a quick dressing.',
++        'Divide quinoa between bowls; top with roasted sweet potato, black beans, and avocado.',
++        'Drizzle with the lime-cilantro dressing and sprinkle with pumpkin seeds.',
++      ],
++      nutritionNotes: 'Roast extra sweet potato — it reheats well for the next day\u2019s lunch.',
++    },
++    {
++      id: 'luteal-chamomile-walnut-snack',
++      title: 'Chamomile & Walnut Snack Plate',
++      image: '/images/recipes/luteal-chamomile-walnut-snack.jpg',
++      mealType: 'snack',
++      servings: 1,
++      prepTime: '5 min',
++      cookTime: '0 min',
++      tags: ['Vegetarian', 'Gluten-Free', 'magnesium-rich', 'calming'],
++      whyItHelps: 'A small, calming plate for the evening — walnuts and dark chocolate provide magnesium, while chamomile tea supports the nervous system as PMS symptoms build.',
++      ingredients: [
++        { item: 'Walnuts (or pumpkin seeds for nut-free)', amount: '2–3 pieces' },
++        { item: 'Dark chocolate square (70%+)', amount: '1' },
++        { item: 'Dried tart cherries', amount: '1 tbsp' },
++        { item: 'Chamomile tea', amount: '1 cup' },
++      ],
++      steps: [
++        'Brew the chamomile tea and let steep for 4–5 minutes.',
++        'Arrange the walnuts, dark chocolate, and dried cherries on a small plate.',
++        'Enjoy slowly alongside the warm tea.',
++      ],
++      nutritionNotes: 'Swap walnuts for pumpkin seeds to make this fully nut-free.',
++    },
++    {
++      id: 'luteal-congee-flareup',
++      title: 'Simple Rice Porridge (Congee)',
++      image: '/images/recipes/luteal-congee-flareup.jpg',
++      mealType: 'flareUp',
++      servings: 2,
++      prepTime: '5 min',
++      cookTime: '35 min',
++      tags: ['Vegan', 'Vegetarian', 'Gluten-Free', 'Dairy-Free', 'Nut-Free', 'easy-to-digest', 'flare-friendly'],
++      whyItHelps: 'A warm, low-residue, easily digestible option for flare days or heavier symptom days when appetite and digestion are both low.',
++      ingredients: [
++        { item: 'White rice', amount: '1/2 cup' },
++        { item: 'Vegetable broth', amount: '4 cups' },
++        { item: 'Fresh ginger, sliced', amount: '1 tsp' },
++        { item: 'Salt', amount: 'to taste' },
++      ],
++      steps: [
++        'Combine rice, broth, and ginger in a pot and bring to a boil.',
++        'Reduce heat to low and simmer, stirring occasionally, for 30–35 minutes until thick and porridge-like.',
++        'Season with a little salt and serve warm.',
++      ],
++      nutritionNotes: 'Keep this recipe bookmarked in the Flare-Up Mode toggle for quick access on tough days.',
++    },
++  ],
++}
++
++export default RECIPES
+-- 
+2.43.0
+

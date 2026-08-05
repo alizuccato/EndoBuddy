@@ -8,8 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node server.js",
-    "api": "node server.js"
+    "start": "node --env-file=.env server.js",
+    "api": "node --env-file=.env server.js"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
