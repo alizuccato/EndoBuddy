@@ -57,7 +57,12 @@ function App() {
         cycleDay: l.cycle_day, cyclePhase: l.cycle_phase,
         flowLevel: l.flow_level, notes: l.notes,
         overallWellness: l.overall_wellness, isPeriodDay: !!l.is_period_day,
-        symptoms: [],
+        // The API now returns each log's symptom_entries rows (see the
+        // GET /api/logs/:userId fix). Map them into the {id, name, icon}
+        // shape DoctorReport and other components expect.
+        symptoms: (l.symptoms || []).map(s => ({
+          id: s.id, name: s.symptom_name, icon: s.symptom_icon,
+        })),
       }))
       setRecentLogs(formatted)
       setTodayLogged(formatted.some(l => l.date === today && l.painLevel != null))
@@ -235,9 +240,18 @@ function App() {
       try {
         currentDayNum = getDayOfCycle(lastPeriodStart, cycleLength)
         if (currentDayNum != null) {
+          // Ovulation happens ~14 days before the *next* period, not on a
+          // fixed day 15 — the luteal phase (post-ovulation) is the part of
+          // the cycle that stays roughly constant at ~14 days, while the
+          // follicular phase (pre-ovulation) is what stretches or shrinks
+          // when a cycle runs longer or shorter than 28 days. Anchoring off
+          // cycleLength instead of a hardcoded day keeps this in sync with
+          // apps like most standard cycle trackers (e.g. My Cycle), which
+          // predict ovulation the same way.
+          const ovulationDay = Math.max(1, cycleLength - 14)
           if (currentDayNum <= 5) currentPhase = 'menstrual'
-          else if (currentDayNum <= 14) currentPhase = 'follicular'
-          else if (currentDayNum === 15) currentPhase = 'ovulatory'
+          else if (currentDayNum < ovulationDay) currentPhase = 'follicular'
+          else if (currentDayNum === ovulationDay) currentPhase = 'ovulatory'
           else currentPhase = 'luteal'
         }
       } catch (e) {

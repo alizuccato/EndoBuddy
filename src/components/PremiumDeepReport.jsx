@@ -29,15 +29,20 @@ export default function PremiumDeepReport({ cycleData, patterns, isPremium = tru
   const { days } = cycleData || {}
   const loggedDays = (days || []).filter(d => !d.isFuture && d.painLevel > 0)
 
-  // Long-term trend: 4-week rolling averages  
+  // Long-term trend: rolling 7-day pain averages.
+  // Slides one day at a time (not three) so the chart actually shows a
+  // trajectory as soon as there's more than one week of data, instead of
+  // needing 10+ logged days before a second point ever appears. With the
+  // old step of 3, 9 logged days produced exactly one data point — which
+  // rendered as a single number instead of a "trend."
   const rollingAverages = useMemo(() => {
     if (loggedDays.length < 7) return []
     const avgs = []
-    for (let i = 0; i <= loggedDays.length - 7; i += 3) {
+    for (let i = 0; i <= loggedDays.length - 7; i += 1) {
       const week = loggedDays.slice(i, i + 7)
       const avg = week.reduce((s, d) => s + d.painLevel, 0) / week.length
       avgs.push({
-        week: Math.floor(i / 3) + 1,
+        week: i + 1,
         avg: avg.toFixed(1),
         startDate: week[0].date,
       })
@@ -88,7 +93,7 @@ export default function PremiumDeepReport({ cycleData, patterns, isPremium = tru
         <div className="space-y-4">
           <p className="text-xs text-gray-500">Rolling 7-day pain averages show your long-term trajectory.</p>
           
-          {rollingAverages.length > 0 ? (
+          {rollingAverages.length >= 2 ? (
             <div className="bg-gray-50 rounded-xl p-4">
               <div className="flex items-end gap-1 h-24">
                 {rollingAverages.map((week, idx) => {
@@ -102,15 +107,24 @@ export default function PremiumDeepReport({ cycleData, patterns, isPremium = tru
                           height: `${height}%`,
                           backgroundColor: `hsl(${340 - parseFloat(week.avg) * 20}, 70%, ${60 - parseFloat(week.avg) * 2}%)`,
                         }}
-                        title={`Week ${week.week}: ${week.avg}/10`}
+                        title={`Day ${week.week}: ${week.avg}/10`}
                       />
                     </div>
                   )
                 })}
               </div>
             </div>
+          ) : rollingAverages.length === 1 ? (
+            <div className="bg-gray-50 rounded-xl p-4 text-center">
+              <p className="text-2xl font-bold text-gray-700">{rollingAverages[0].avg}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                First 7-day average logged. Keep tracking daily — one more logged day will start showing your trend over time.
+              </p>
+            </div>
           ) : (
-            <p className="text-sm text-gray-500 text-center py-4">Need more data (at least 7 logged days) for trend analysis.</p>
+            <p className="text-sm text-gray-500 text-center py-4">
+              Need at least 7 logged days for a 7-day average, and 8+ for a visible trend ({loggedDays.length} logged so far).
+            </p>
           )}
 
           {/* Sparkline summary */}

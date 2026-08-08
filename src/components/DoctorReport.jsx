@@ -379,7 +379,7 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
           <div className="mb-8">
             <h2 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
               <span className="w-1 h-5 bg-endo-purple rounded-full inline-block" />
-              AI-Detected Patterns <span class="text-[10px] font-normal text-gray-400">(Correlational)</span>
+              AI-Detected Patterns <span className="text-[10px] font-normal text-gray-400">(Correlational)</span>
             </h2>
             
             <div className="bg-gradient-to-br from-endo-purple/5 to-endo-pink/5 rounded-xl p-4 border border-endo-lavender/20">
@@ -437,12 +437,19 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
               </thead>
               <tbody>
                 {(days || []).filter(d => !d.isFuture && d.painLevel > 0).slice(0, 30).map((day) => {
-                  const style = PHASE_STYLES[day.phase]
+                  // day.phase can be null (e.g. logs saved before a period
+                  // start date was set, so no cycle phase could be computed).
+                  // PHASE_STYLES has no entry for null, so fall back to a
+                  // neutral "Unknown" style instead of crashing on
+                  // style.bg/style.text below.
+                  const style = PHASE_STYLES[day.phase] || {
+                    bg: 'bg-gray-100', text: 'text-gray-500', label: 'Unknown',
+                  }
                   const painColor = getPainColor(day.painLevel)
                   
                   return (
                     <tr key={day.date} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-2 px-2 text-xs text-gray-600">{day.date.slice(5)}</td>
+                      <td className="py-2 px-2 text-xs text-gray-600">{String(day.date).slice(5)}</td>
                       <td className="py-2 px-2 text-xs text-gray-600">{day.dayNum}</td>
                       <td className="py-2 px-2">
                         <span className={`text-xs px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}>
