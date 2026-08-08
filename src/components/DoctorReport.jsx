@@ -86,6 +86,47 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
     window.print()
   }, [])
 
+  // Share was previously a button with no onClick at all — completely
+  // inert, silently doing nothing when tapped. There's no persistent URL
+  // for a given report (it's generated fresh in the browser each time),
+  // so this shares a text summary via the native share sheet rather than
+  // a link or file. navigator.share isn't available on every browser
+  // (notably most desktop browsers), so it falls back to copying that
+  // same summary to the clipboard, with "Save as PDF / Print" pointed to
+  // as the way to get/share the full report — matching how NotesStep.jsx
+  // already handles an unsupported-browser-feature fallback in this app.
+  const handleShare = useCallback(async () => {
+    const summaryLines = [
+      `EndoBuddy Health Report${patientName ? ` — ${patientName}` : ''}`,
+      dateRange.start && dateRange.end ? `Period: ${dateRange.start} to ${dateRange.end}` : null,
+      reportData ? `Avg pain: ${reportData.avgPain}/10 across ${reportData.totalLoggedDays} logged days` : null,
+    ].filter(Boolean)
+    const summaryText = summaryLines.join('\n')
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'EndoBuddy Health Report', text: summaryText })
+      } catch (err) {
+        // AbortError fires when the user just closes the native share
+        // sheet without picking anything — that's a normal cancel, not
+        // an error, so there's nothing to report back for it.
+        if (err.name !== 'AbortError') {
+          console.error('Share failed:', err)
+          alert('Sharing failed. Try "Save as PDF / Print" instead to save or share the full report.')
+        }
+      }
+    } else if (navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(summaryText)
+        alert('Sharing isn\'t supported on this browser. A summary has been copied to your clipboard instead — use "Save as PDF / Print" to share the full report.')
+      } catch {
+        alert('Sharing isn\'t supported on this browser. Use "Save as PDF / Print" instead to save or share the full report.')
+      }
+    } else {
+      alert('Sharing isn\'t supported on this browser. Use "Save as PDF / Print" instead to save or share the full report.')
+    }
+  }, [patientName, dateRange, reportData])
+
   // If no data, show the setup form
   if (!showReport) {
     return (
@@ -216,7 +257,7 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
           <button onClick={handlePrint} className="btn-primary text-sm px-6 py-2.5">
             🖨️ Save as PDF / Print
           </button>
-          <button className="px-4 py-2.5 text-sm font-medium rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200">
+          <button onClick={handleShare} className="px-4 py-2.5 text-sm font-medium rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200">
             📤 Share
           </button>
         </div>

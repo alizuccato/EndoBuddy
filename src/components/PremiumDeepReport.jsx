@@ -97,9 +97,21 @@ export default function PremiumDeepReport({ cycleData, patterns, isPremium = tru
             <div className="bg-gray-50 rounded-xl p-4">
               <div className="flex items-end gap-1 h-24">
                 {rollingAverages.map((week, idx) => {
-                  const height = (parseFloat(week.avg) / 10) * 100
+                  // Capped at 90% (not 100%) so there's always a little
+                  // headroom above the tallest bar for the number label
+                  // sitting on top of it, even at a pain average of 10.
+                  const height = Math.min(90, (parseFloat(week.avg) / 10) * 100)
                   return (
-                    <div key={idx} className="flex-1 flex flex-col items-center gap-1">
+                    // h-full + justify-end (rather than the previous
+                    // content-sized column) gives this column a definite
+                    // height to measure against. Without that, the bar's
+                    // `height: X%` below had no definite containing block
+                    // to resolve percentages against — CSS spec treats
+                    // that as 0, so every bar silently rendered at zero
+                    // height. Only the number label was ever visible,
+                    // which is exactly what showed up as "just numbers,
+                    // no graph."
+                    <div key={idx} className="flex-1 h-full flex flex-col justify-end items-center gap-1">
                       <span className="text-[9px] text-gray-500">{week.avg}</span>
                       <div
                         className="w-full rounded-t-sm transition-all hover:opacity-80"
