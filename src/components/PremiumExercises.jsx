@@ -25,9 +25,16 @@ export default function PremiumExercises({ currentPhase, isPremium = true }) {
   const [expandedExercise, setExpandedExercise] = useState(null)
   const [gentleDayMode, setGentleDayMode] = useState(false)
 
-  const phase = currentPhase || 'luteal'
-  const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
-  const allExercises = EXERCISES[phase] || EXERCISES.luteal
+  // EXERCISES is only keyed by the 4 real menstrual phases. Same rationale
+  // as PremiumMealPlans: show the combined library under a neutral label
+  // for users with no real phase to key off.
+  const hasRealPhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(currentPhase)
+  const phase = hasRealPhase ? currentPhase : 'luteal'
+  const phaseStyle = hasRealPhase ? (PHASE_STYLES[phase] || PHASE_STYLES.luteal) : PHASE_STYLES.off
+  const allExercises = hasRealPhase
+    ? (EXERCISES[phase] || EXERCISES.luteal)
+    : Object.values(EXERCISES).flat()
+  const phaseLabel = hasRealPhase ? `${phaseStyle.label} Phase` : 'All Movement Guides'
 
   const visibleExercises = useMemo(() => {
     let list = allExercises
@@ -52,8 +59,8 @@ export default function PremiumExercises({ currentPhase, isPremium = true }) {
       <div className={`${phaseStyle.bg} -mx-6 -mt-6 px-6 py-3 mb-4 border-b ${phaseStyle.border}`}>
         <div className="flex items-center justify-between">
           <div>
-            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
-            <p className="text-sm text-gray-600 mt-0.5">{allExercises.length} movement guides for this phase</p>
+            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseLabel}</span>
+            <p className="text-sm text-gray-600 mt-0.5">{allExercises.length} movement guides{hasRealPhase ? ' for this phase' : ''}</p>
           </div>
           <span className="bg-white/80 text-xs font-medium px-2 py-1 rounded-full text-endo-purple">⭐ Premium</span>
         </div>

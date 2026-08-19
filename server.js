@@ -106,6 +106,19 @@ try { await teamDb("ALTER TABLE users ADD COLUMN password_hash TEXT") } catch (e
 // anywhere in this repo.
 try { await teamDb("ALTER TABLE users ADD COLUMN onboarding_complete INTEGER DEFAULT 0") } catch (e) {}
 
+// Supports users without a menstrual cycle to track against (e.g. post-
+// hysterectomy, menopausal). 'menstrual' (default) computes cycle day/phase
+// from last_period_start as before; 'acyclic' turns that off. A user in
+// acyclic mode may still optionally track a cyclical hormone therapy
+// pattern (e.g. cyclic HRT) — when hormone_cycle_tracking is set, the
+// existing last_period_start/cycle_length_avg columns are repurposed to
+// represent that hormone cycle instead of a menstrual one; the app labels
+// it accordingly rather than showing menstrual-phase language. See
+// src/db/004_add_cycle_tracking_mode.sql for the documented migration
+// (not actually run against prod — same story as the columns above).
+try { await teamDb("ALTER TABLE users ADD COLUMN cycle_tracking_mode TEXT DEFAULT 'menstrual'") } catch (e) {}
+try { await teamDb("ALTER TABLE users ADD COLUMN hormone_cycle_tracking INTEGER DEFAULT 0") } catch (e) {}
+
 // pain_level is the single most-used field in this entire app (every
 // report, insight, and pattern is built from it) but — like the columns
 // above — src/db/001_initial_schema.sql's daily_logs table doesn't
@@ -632,10 +645,12 @@ const router = {
     const safeRole = ['patient', 'clinician', 'admin'].includes(body.role) ? body.role : 'patient'
     const safeClinic = body.clinicName || ''
     const safeSpecialty = body.specialty || ''
+    const safeCycleMode = ['menstrual', 'acyclic'].includes(body.cycleTrackingMode) ? body.cycleTrackingMode : 'menstrual'
+    const safeHormoneTracking = body.hormoneCycleTracking ? 1 : 0
     
     await teamDb(
-      `INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
-      [id, safeName, safeDob, safeTz, safeCycle, safeLps, now, now, safeRole, safeClinic, safeSpecialty]
+      `INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty, cycle_tracking_mode, hormone_cycle_tracking) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, safeName, safeDob, safeTz, safeCycle, safeLps, now, now, safeRole, safeClinic, safeSpecialty, safeCycleMode, safeHormoneTracking]
     )
     json(res, { id, ...body }, 201)
   },
@@ -671,6 +686,8 @@ const router = {
       clinicName: 'clinic_name',
       specialty: 'specialty',
       email: 'email',
+      cycleTrackingMode: 'cycle_tracking_mode',
+      hormoneCycleTracking: 'hormone_cycle_tracking',
     }
     
     const updates = []
@@ -680,6 +697,10 @@ const router = {
         let val = body[field]
         if (field === 'dateOfBirth' || field === 'lastPeriodStart') {
           val = isValidDate(val) ? val : null
+        } else if (field === 'cycleTrackingMode') {
+          val = ['menstrual', 'acyclic'].includes(val) ? val : 'menstrual'
+        } else if (field === 'hormoneCycleTracking') {
+          val = val ? 1 : 0
         } else if (typeof val === 'string') {
           // val stays as-is; bound as a parameter below
         } else if (field === 'cycleLength' || field === 'periodLength' || field === 'onboardingComplete') {

@@ -1,0 +1,953 @@
+diff --git a/server.js b/server.js
+index 6b72c9c..85681b4 100644
+--- a/server.js
++++ b/server.js
+@@ -32,9 +32,18 @@ const db = createClient({
+   authToken: process.env.TURSO_AUTH_TOKEN,
+ })
+ 
+-async function teamDb(sql) {
++// Executes a SQL statement. Always pass user-derived values via `args`
++// (positional `?` placeholders) rather than interpolating them into the
++// `sql` string — @libsql/client sends args as separate bind parameters,
++// so they can never be interpreted as SQL syntax no matter what
++// characters they contain. This replaces the previous approach of
++// hand-escaping every value with escapeStr() and inlining it into the
++// query text, which was fragile (one missed call site anywhere in this
++// file would have been a real SQL injection hole against a database of
++// patients' health data).
++async function teamDb(sql, args = []) {
+   try {
+-    const result = await db.execute(sql)
++    const result = await db.execute({ sql, args })
+     return result.rows
+   } catch (err) {
+     console.error('DB Error:', err.message)
+@@ -80,6 +89,64 @@ try { await teamDb("ALTER TABLE users ADD COLUMN period_length_avg INTEGER") } c
+ // story as above: that migration file isn't actually run against prod, so
+ // the columns/tables it defines are created here defensively instead.)
+ try { await teamDb("ALTER TABLE users ADD COLUMN clinician_id TEXT") } catch (e) {}
++
++// email / password_hash are used throughout this file (register, login,
++// password changes, auth) but — like period_length_avg and clinician_id
++// above — have no CREATE/ALTER statement anywhere in this repo's
++// migration files. Production's users table evidently picked these up
++// some other way outside of what's tracked in source control. Added
++// defensively here so this schema is actually reproducible from this
++// repo (e.g. rebuilding the DB from scratch, or standing up a local/dev
++// database) instead of only working by accident of the live Turso DB's
++// undocumented history.
++try { await teamDb("ALTER TABLE users ADD COLUMN email TEXT") } catch (e) {}
++try { await teamDb("ALTER TABLE users ADD COLUMN password_hash TEXT") } catch (e) {}
++// Same story: onboarding_complete is read/written throughout (register,
++// PUT /api/users/:id, /api/me) but likewise has no migration file
++// anywhere in this repo.
++try { await teamDb("ALTER TABLE users ADD COLUMN onboarding_complete INTEGER DEFAULT 0") } catch (e) {}
++
++// pain_level is the single most-used field in this entire app (every
++// report, insight, and pattern is built from it) but — like the columns
++// above — src/db/001_initial_schema.sql's daily_logs table doesn't
++// define it at all. Production clearly has it already (the app works);
++// this only matters for rebuilding the schema from scratch.
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN pain_level INTEGER") } catch (e) {}
++
++// symptom_entries in 001_initial_schema.sql models a normalized
++// symptom_id INTEGER NOT NULL REFERENCES symptoms(id) — but every query
++// in this file (see POST/PUT /api/logs, GET /api/symptoms/:logId, the
++// patterns endpoint) reads and writes symptom_name/symptom_icon TEXT
++// columns directly instead. Production's actual table already matches
++// what this file uses (that's what every existing symptom-logging
++// feature has been running against), so this is a no-op there; it only
++// matters for a database built fresh from this repo's own migrations,
++// which — same as doctor_reports/clinic_invitations/treatment_log above
++// — would otherwise reference a table shape that doesn't match the code
++// at all.
++try {
++  await teamDb(`CREATE TABLE IF NOT EXISTS symptom_entries (
++    id TEXT PRIMARY KEY,
++    daily_log_id TEXT NOT NULL REFERENCES daily_logs(id) ON DELETE CASCADE,
++    symptom_name TEXT NOT NULL,
++    symptom_icon TEXT,
++    severity INTEGER NOT NULL CHECK(severity >= 1 AND severity <= 10),
++    created_at TEXT NOT NULL DEFAULT (datetime('now'))
++  )`)
++} catch (e) {
++  console.error('Failed to create symptom_entries table:', e.message)
++}
++// Registration already does a SELECT-then-INSERT check for a duplicate
++// email, but without a DB-level constraint two near-simultaneous
++// registrations for the same address can both pass that check and both
++// insert — a race the application-level check alone can't close. A
++// unique index closes it at the database layer. Wrapped in try/catch:
++// on a database that already has duplicate emails from before this
++// existed, index creation fails and is skipped rather than crashing
++// startup, exactly like the ADD COLUMNs above.
++try { await teamDb("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL") } catch (e) {
++  console.error('Could not create unique email index (likely pre-existing duplicate emails):', e.message)
++}
+ try {
+   await teamDb(`CREATE TABLE IF NOT EXISTS clinic_invitations (
+     id TEXT PRIMARY KEY,
+@@ -171,10 +238,6 @@ const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
+ function isValidUUID(id) {
+   return typeof id === 'string' && UUID_REGEX.test(id)
+ }
+-function escapeStr(str) {
+-  if (str == null) return 'NULL'
+-  return "'" + String(str).replace(/'/g, "''") + "'"
+-}
+ // Some tables from 001_initial_schema.sql (pain_entries, food_entries,
+ // stress_mood_entries, medication_entries, pattern_insights) were never
+ // actually created against production — see the migration-drift notes
+@@ -183,9 +246,9 @@ function escapeStr(str) {
+ // takes down the whole request. This swallows exactly that failure so
+ // cleanup of tables that DO exist (daily_logs, symptom_entries, etc.)
+ // still completes, while genuine DB errors still surface normally.
+-async function safeDeleteFrom(sql) {
++async function safeDeleteFrom(sql, args = []) {
+   try {
+-    await teamDb(sql)
++    await teamDb(sql, args)
+   } catch (err) {
+     if (!/no such table/i.test(err.message)) throw err
+   }
+@@ -260,7 +323,7 @@ async function getAuthenticatedUserId(req) {
+   if (!token || token.length < 10) return null
+   
+   try {
+-    const rows = await teamDb(`SELECT user_id, created_at FROM sessions WHERE token = ${escapeStr(token)}`)
++    const rows = await teamDb(`SELECT user_id, created_at FROM sessions WHERE token = ?`, [token])
+     if (rows.length === 0) return null
+     const session = rows[0]
+     if (session.created_at) {
+@@ -268,7 +331,7 @@ async function getAuthenticatedUserId(req) {
+       const expiry = 24 * 60 * 60 * 1000 // 24-hour TTL expiry
+       if (Date.now() - createdAt.getTime() > expiry) {
+         try {
+-          await teamDb(`DELETE FROM sessions WHERE token = ${escapeStr(token)}`)
++          await teamDb(`DELETE FROM sessions WHERE token = ?`, [token])
+         } catch (e) {
+           console.error("Failed to delete expired session:", e.message)
+         }
+@@ -283,7 +346,7 @@ async function getAuthenticatedUserId(req) {
+ 
+ async function verifyUserAuth(req, res, targetUserId) {
+   try {
+-    const userRows = await teamDb(`SELECT password_hash FROM users WHERE id = ${escapeStr(targetUserId)}`)
++    const userRows = await teamDb(`SELECT password_hash FROM users WHERE id = ?`, [targetUserId])
+     if (userRows.length === 0) {
+       res.writeHead(404, { 'Content-Type': 'application/json' })
+       res.end(JSON.stringify({ error: 'User not found' }))
+@@ -437,7 +500,7 @@ async function handleStripeWebhook(req, res) {
+         const userId = session.client_reference_id
+         const customerId = session.customer
+         if (userId && isValidUUID(userId)) {
+-          await teamDb(`UPDATE users SET is_premium = 1, stripe_customer_id = ${escapeStr(customerId)} WHERE id = ${escapeStr(userId)}`)
++          await teamDb(`UPDATE users SET is_premium = 1, stripe_customer_id = ? WHERE id = ?`, [customerId, userId])
+           console.log(`Stripe webhook: marked user ${userId} as premium`)
+         } else {
+           console.warn('Stripe webhook: checkout.session.completed missing a valid client_reference_id; could not mark a user premium')
+@@ -446,14 +509,14 @@ async function handleStripeWebhook(req, res) {
+       }
+       case 'customer.subscription.deleted': {
+         const subscription = event.data.object
+-        await teamDb(`UPDATE users SET is_premium = 0 WHERE stripe_customer_id = ${escapeStr(subscription.customer)}`)
++        await teamDb(`UPDATE users SET is_premium = 0 WHERE stripe_customer_id = ?`, [subscription.customer])
+         console.log(`Stripe webhook: revoked premium for customer ${subscription.customer} (subscription canceled)`)
+         break
+       }
+       case 'customer.subscription.updated': {
+         const subscription = event.data.object
+         const active = ['active', 'trialing'].includes(subscription.status)
+-        await teamDb(`UPDATE users SET is_premium = ${active ? 1 : 0} WHERE stripe_customer_id = ${escapeStr(subscription.customer)}`)
++        await teamDb(`UPDATE users SET is_premium = ? WHERE stripe_customer_id = ?`, [active ? 1 : 0, subscription.customer])
+         break
+       }
+       default:
+@@ -523,7 +586,7 @@ const router = {
+       return json(res, { error: 'Billing management is not configured yet. Please contact support.' }, 503)
+     }
+ 
+-    const rows = await teamDb(`SELECT stripe_customer_id FROM users WHERE id = ${escapeStr(params.id)}`)
++    const rows = await teamDb(`SELECT stripe_customer_id FROM users WHERE id = ?`, [params.id])
+     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+     const customerId = rows[0].stripe_customer_id
+     if (!customerId) return json(res, { error: 'No active subscription found for this account' }, 400)
+@@ -561,16 +624,19 @@ const router = {
+     const now = new Date().toISOString()
+     
+     // Input validation & sanitization
+-    const safeName = escapeStr(body.displayName || '')
+-    const safeDob = isValidDate(body.dateOfBirth) ? escapeStr(body.dateOfBirth) : 'NULL'
+-    const safeTz = escapeStr(body.timezone || 'UTC')
++    const safeName = body.displayName || ''
++    const safeDob = isValidDate(body.dateOfBirth) ? body.dateOfBirth : null
++    const safeTz = body.timezone || 'UTC'
+     const safeCycle = isValidNumber(body.cycleLength) ? Number(body.cycleLength) : 28
+-    const safeLps = isValidDate(body.lastPeriodStart) ? escapeStr(body.lastPeriodStart) : 'NULL'
+-    const safeRole = ['patient', 'clinician', 'admin'].includes(body.role) ? escapeStr(body.role) : escapeStr('patient')
+-    const safeClinic = escapeStr(body.clinicName || '')
+-    const safeSpecialty = escapeStr(body.specialty || '')
+-    
+-    await teamDb(`INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty) VALUES (${escapeStr(id)}, ${safeName}, ${safeDob}, ${safeTz}, ${safeCycle}, ${safeLps}, 1, ${escapeStr(now)}, ${escapeStr(now)}, ${safeRole}, ${safeClinic}, ${safeSpecialty})`)
++    const safeLps = isValidDate(body.lastPeriodStart) ? body.lastPeriodStart : null
++    const safeRole = ['patient', 'clinician', 'admin'].includes(body.role) ? body.role : 'patient'
++    const safeClinic = body.clinicName || ''
++    const safeSpecialty = body.specialty || ''
++    
++    await teamDb(
++      `INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
++      [id, safeName, safeDob, safeTz, safeCycle, safeLps, now, now, safeRole, safeClinic, safeSpecialty]
++    )
+     json(res, { id, ...body }, 201)
+   },
+ 
+@@ -578,7 +644,7 @@ const router = {
+     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.id))) return
+     
+-    const rows = await teamDb(`SELECT * FROM users WHERE id = ${escapeStr(params.id)}`)
++    const rows = await teamDb(`SELECT * FROM users WHERE id = ?`, [params.id])
+     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+     // Never send the password hash itself to the client — expose only
+     // whether one is set, so the UI can decide which password form to show.
+@@ -608,24 +674,27 @@ const router = {
+     }
+     
+     const updates = []
++    const args = []
+     for (const [field, dbCol] of Object.entries(ALLOWED_FIELDS)) {
+       if (body[field] !== undefined && body[field] !== null) {
+         let val = body[field]
+         if (field === 'dateOfBirth' || field === 'lastPeriodStart') {
+-          val = isValidDate(val) ? escapeStr(val) : 'NULL'
++          val = isValidDate(val) ? val : null
+         } else if (typeof val === 'string') {
+-          val = escapeStr(val)
++          // val stays as-is; bound as a parameter below
+         } else if (field === 'cycleLength' || field === 'periodLength' || field === 'onboardingComplete') {
+-          val = isValidNumber(val) ? Number(val) : 'NULL'
++          val = isValidNumber(val) ? Number(val) : null
+         } else {
+-          val = 'NULL'
++          val = null
+         }
+-        updates.push(`${dbCol} = ${val}`)
++        updates.push(`${dbCol} = ?`)
++        args.push(val)
+       }
+     }
+     
+     if (updates.length === 0) return json(res, { error: 'No valid fields to update' }, 400)
+-    await teamDb(`UPDATE users SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
++    args.push(now, params.id)
++    await teamDb(`UPDATE users SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`, args)
+     json(res, { id: params.id, updated: true })
+   },
+ 
+@@ -644,7 +713,7 @@ const router = {
+       return json(res, { error: 'New password must be at least 6 characters' }, 400)
+     }
+ 
+-    const rows = await teamDb(`SELECT email, password_hash FROM users WHERE id = ${escapeStr(params.id)}`)
++    const rows = await teamDb(`SELECT email, password_hash FROM users WHERE id = ?`, [params.id])
+     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+     const user = rows[0]
+ 
+@@ -658,14 +727,14 @@ const router = {
+ 
+     const now = new Date().toISOString()
+     const newHash = hashPassword(newPassword)
+-    await teamDb(`UPDATE users SET password_hash = ${escapeStr(newHash)}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
++    await teamDb(`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, [newHash, now, params.id])
+ 
+     // Setting a password now makes this account subject to the Bearer-token
+     // check in verifyUserAuth, so hand back a session token immediately —
+     // mirroring what /register and /login do — instead of leaving the
+     // client to make a request it can no longer pass.
+     const token = generateToken()
+-    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(params.id)}, ${escapeStr(now)})`)
++    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)`, [token, params.id, now])
+     json(res, { success: true, token })
+   },
+ 
+@@ -676,7 +745,7 @@ const router = {
+     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid user ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.id))) return
+ 
+-    const rows = await teamDb(`SELECT password_hash FROM users WHERE id = ${escapeStr(params.id)}`)
++    const rows = await teamDb(`SELECT password_hash FROM users WHERE id = ?`, [params.id])
+     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+     const user = rows[0]
+ 
+@@ -687,22 +756,22 @@ const router = {
+       }
+     }
+ 
+-    const logRows = await teamDb(`SELECT id FROM daily_logs WHERE user_id = ${escapeStr(params.id)}`)
+-    const logIds = logRows.map(r => escapeStr(r.id))
++    const logRows = await teamDb(`SELECT id FROM daily_logs WHERE user_id = ?`, [params.id])
++    const logIds = logRows.map(r => r.id)
+     if (logIds.length > 0) {
+-      const inClause = `(${logIds.join(',')})`
+-      await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id IN ${inClause}`)
+-      await safeDeleteFrom(`DELETE FROM pain_entries WHERE daily_log_id IN ${inClause}`)
+-      await safeDeleteFrom(`DELETE FROM food_entries WHERE daily_log_id IN ${inClause}`)
+-      await safeDeleteFrom(`DELETE FROM stress_mood_entries WHERE daily_log_id IN ${inClause}`)
+-      await safeDeleteFrom(`DELETE FROM medication_entries WHERE daily_log_id IN ${inClause}`)
++      const placeholders = logIds.map(() => '?').join(',')
++      await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id IN (${placeholders})`, logIds)
++      await safeDeleteFrom(`DELETE FROM pain_entries WHERE daily_log_id IN (${placeholders})`, logIds)
++      await safeDeleteFrom(`DELETE FROM food_entries WHERE daily_log_id IN (${placeholders})`, logIds)
++      await safeDeleteFrom(`DELETE FROM stress_mood_entries WHERE daily_log_id IN (${placeholders})`, logIds)
++      await safeDeleteFrom(`DELETE FROM medication_entries WHERE daily_log_id IN (${placeholders})`, logIds)
+     }
+-    await teamDb(`DELETE FROM daily_logs WHERE user_id = ${escapeStr(params.id)}`)
+-    await teamDb(`DELETE FROM cycles WHERE user_id = ${escapeStr(params.id)}`)
+-    await safeDeleteFrom(`DELETE FROM pattern_insights WHERE user_id = ${escapeStr(params.id)}`)
+-    await teamDb(`DELETE FROM doctor_reports WHERE user_id = ${escapeStr(params.id)}`)
+-    await teamDb(`DELETE FROM sessions WHERE user_id = ${escapeStr(params.id)}`)
+-    await teamDb(`DELETE FROM users WHERE id = ${escapeStr(params.id)}`)
++    await teamDb(`DELETE FROM daily_logs WHERE user_id = ?`, [params.id])
++    await teamDb(`DELETE FROM cycles WHERE user_id = ?`, [params.id])
++    await safeDeleteFrom(`DELETE FROM pattern_insights WHERE user_id = ?`, [params.id])
++    await teamDb(`DELETE FROM doctor_reports WHERE user_id = ?`, [params.id])
++    await teamDb(`DELETE FROM sessions WHERE user_id = ?`, [params.id])
++    await teamDb(`DELETE FROM users WHERE id = ?`, [params.id])
+ 
+     json(res, { success: true, deleted: true })
+   },
+@@ -719,26 +788,30 @@ const router = {
+     const now = new Date().toISOString()
+     
+     // Validate optional inputs
+-    const cycleDay = isValidNumber(body.cycleDay) ? Number(body.cycleDay) : 'NULL'
+-    const cyclePhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? escapeStr(body.cyclePhase) : 'NULL'
++    const cycleDay = isValidNumber(body.cycleDay) ? Number(body.cycleDay) : null
++    const cyclePhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? body.cyclePhase : null
+     const isPeriodDay = body.isPeriodDay ? 1 : 0
+-    const flowLevel = ['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? escapeStr(body.flowLevel) : 'NULL'
+-    const painLevel = (isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : 'NULL'
+-    const overallWellness = (isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : 'NULL'
+-    const notes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
++    const flowLevel = ['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? body.flowLevel : null
++    const painLevel = (isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null
++    const overallWellness = (isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : null
++    const notes = body.notes ? String(body.notes) : null
+     
+-    await teamDb(`INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${escapeStr(body.logDate)}, ${cycleDay}, ${cyclePhase}, ${isPeriodDay}, ${flowLevel}, ${painLevel}, ${overallWellness}, ${notes}, ${escapeStr(now)}, ${escapeStr(now)})`)
++    await teamDb(
++      `INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++      [id, body.userId, body.logDate, cycleDay, cyclePhase, isPeriodDay, flowLevel, painLevel, overallWellness, notes, now, now]
++    )
+     
+     // Save symptoms
+     if (body.symptoms && Array.isArray(body.symptoms) && body.symptoms.length > 0) {
+       for (const symptom of body.symptoms) {
+         if (!symptom.name) continue
+         const sid = randomUUID()
+-        const safeSymName = escapeStr(symptom.name)
+-        const safeSymIcon = escapeStr(symptom.icon || '')
+         const safeSeverity = (isValidNumber(symptom.severity) && symptom.severity >= 1 && symptom.severity <= 10) ? Number(symptom.severity) : 5
+         
+-        await teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(id)}, ${safeSymName}, ${safeSymIcon}, ${safeSeverity}, ${escapeStr(now)})`)
++        await teamDb(
++          `INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
++          [sid, id, symptom.name, symptom.icon || '', safeSeverity, now]
++        )
+       }
+     }
+     
+@@ -749,8 +822,26 @@ const router = {
+     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.userId))) return
+     
+-    const rows = await teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} ORDER BY log_date DESC LIMIT 90`)
+-    json(res, rows)
++    const rows = await teamDb(`SELECT * FROM daily_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 90`, [params.userId])
++    if (rows.length === 0) return json(res, rows)
++
++    // This list endpoint previously returned bare daily_logs rows with no
++    // symptom data attached, even though symptom_entries are saved per log
++    // (see the single-day GET /api/logs/:userId/:date route below, which
++    // already did this join). That mismatch is why doctor reports/insights
++    // built from getLogs() always showed "0 symptom types tracked" —
++    // symptoms existed in the DB but never made it into this response.
++    // One IN-query for all logs on this page, rather than N+1 queries.
++    const logIds = rows.map(r => r.id)
++    const placeholders = logIds.map(() => '?').join(',')
++    const symptomRows = await teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id IN (${placeholders})`, logIds)
++    const symptomsByLogId = {}
++    for (const s of symptomRows) {
++      if (!symptomsByLogId[s.daily_log_id]) symptomsByLogId[s.daily_log_id] = []
++      symptomsByLogId[s.daily_log_id].push(s)
++    }
++    const withSymptoms = rows.map(r => ({ ...r, symptoms: symptomsByLogId[r.id] || [] }))
++    json(res, withSymptoms)
+   },
+ 
+   'GET /api/logs/:userId/:date': async (req, res, params) => {
+@@ -758,10 +849,10 @@ const router = {
+     if (!(await verifyUserAuth(req, res, params.userId))) return
+     if (!isValidDate(params.date)) return json(res, { error: 'Invalid date format (must be YYYY-MM-DD)' }, 400)
+     
+-    const rows = await teamDb(`SELECT * FROM daily_logs WHERE user_id = ${escapeStr(params.userId)} AND log_date = ${escapeStr(params.date)}`)
++    const rows = await teamDb(`SELECT * FROM daily_logs WHERE user_id = ? AND log_date = ?`, [params.userId, params.date])
+     if (rows.length === 0) return json(res, null)
+     const log = rows[0]
+-    const symptoms = await teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(log.id)}`)
++    const symptoms = await teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ?`, [log.id])
+     json(res, { ...log, symptoms })
+   },
+ 
+@@ -771,7 +862,7 @@ const router = {
+   'PUT /api/logs/:id': async (req, res, params) => {
+     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid log ID format' }, 400)
+     
+-    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
++    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ?`, [params.id])
+     if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
+     if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
+     
+@@ -779,32 +870,35 @@ const router = {
+     const now = new Date().toISOString()
+     
+     const updates = []
+-    if (body.cycleDay !== undefined) updates.push(`cycle_day = ${isValidNumber(body.cycleDay) ? Number(body.cycleDay) : 'NULL'}`)
+-    if (body.cyclePhase !== undefined) updates.push(`cycle_phase = ${['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? escapeStr(body.cyclePhase) : 'NULL'}`)
+-    if (body.isPeriodDay !== undefined) updates.push(`is_period_day = ${body.isPeriodDay ? 1 : 0}`)
+-    if (body.flowLevel !== undefined) updates.push(`flow_level = ${['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? escapeStr(body.flowLevel) : 'NULL'}`)
+-    if (body.painLevel !== undefined) updates.push(`pain_level = ${(isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : 'NULL'}`)
+-    if (body.overallWellness !== undefined) updates.push(`overall_wellness = ${(isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : 'NULL'}`)
+-    if (body.notes !== undefined) updates.push(`notes = ${body.notes ? escapeStr(String(body.notes)) : 'NULL'}`)
++    const args = []
++    if (body.cycleDay !== undefined) { updates.push(`cycle_day = ?`); args.push(isValidNumber(body.cycleDay) ? Number(body.cycleDay) : null) }
++    if (body.cyclePhase !== undefined) { updates.push(`cycle_phase = ?`); args.push(['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? body.cyclePhase : null) }
++    if (body.isPeriodDay !== undefined) { updates.push(`is_period_day = ?`); args.push(body.isPeriodDay ? 1 : 0) }
++    if (body.flowLevel !== undefined) { updates.push(`flow_level = ?`); args.push(['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? body.flowLevel : null) }
++    if (body.painLevel !== undefined) { updates.push(`pain_level = ?`); args.push((isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null) }
++    if (body.overallWellness !== undefined) { updates.push(`overall_wellness = ?`); args.push((isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : null) }
++    if (body.notes !== undefined) { updates.push(`notes = ?`); args.push(body.notes ? String(body.notes) : null) }
+     
+     if (updates.length === 0 && !Array.isArray(body.symptoms)) {
+       return json(res, { error: 'No valid fields to update' }, 400)
+     }
+     
+     if (updates.length > 0) {
+-      await teamDb(`UPDATE daily_logs SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
++      args.push(now, params.id)
++      await teamDb(`UPDATE daily_logs SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`, args)
+     }
+     
+     // Replace symptoms if a new list was provided
+     if (Array.isArray(body.symptoms)) {
+-      await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
++      await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id = ?`, [params.id])
+       for (const symptom of body.symptoms) {
+         if (!symptom.name) continue
+         const sid = randomUUID()
+-        const safeSymName = escapeStr(symptom.name)
+-        const safeSymIcon = escapeStr(symptom.icon || '')
+         const safeSeverity = (isValidNumber(symptom.severity) && symptom.severity >= 1 && symptom.severity <= 10) ? Number(symptom.severity) : 5
+-        await teamDb(`INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (${escapeStr(sid)}, ${escapeStr(params.id)}, ${safeSymName}, ${safeSymIcon}, ${safeSeverity}, ${escapeStr(now)})`)
++        await teamDb(
++          `INSERT INTO symptom_entries (id, daily_log_id, symptom_name, symptom_icon, severity, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
++          [sid, params.id, symptom.name, symptom.icon || '', safeSeverity, now]
++        )
+       }
+     }
+     
+@@ -815,16 +909,16 @@ const router = {
+   'DELETE /api/logs/:id': async (req, res, params) => {
+     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid log ID format' }, 400)
+     
+-    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
++    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ?`, [params.id])
+     if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
+     if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
+     
+-    await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+-    await safeDeleteFrom(`DELETE FROM pain_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+-    await safeDeleteFrom(`DELETE FROM food_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+-    await safeDeleteFrom(`DELETE FROM stress_mood_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+-    await safeDeleteFrom(`DELETE FROM medication_entries WHERE daily_log_id = ${escapeStr(params.id)}`)
+-    await teamDb(`DELETE FROM daily_logs WHERE id = ${escapeStr(params.id)}`)
++    await teamDb(`DELETE FROM symptom_entries WHERE daily_log_id = ?`, [params.id])
++    await safeDeleteFrom(`DELETE FROM pain_entries WHERE daily_log_id = ?`, [params.id])
++    await safeDeleteFrom(`DELETE FROM food_entries WHERE daily_log_id = ?`, [params.id])
++    await safeDeleteFrom(`DELETE FROM stress_mood_entries WHERE daily_log_id = ?`, [params.id])
++    await safeDeleteFrom(`DELETE FROM medication_entries WHERE daily_log_id = ?`, [params.id])
++    await teamDb(`DELETE FROM daily_logs WHERE id = ?`, [params.id])
+     
+     json(res, { success: true, deleted: true })
+   },
+@@ -840,13 +934,16 @@ const router = {
+ 
+     const id = randomUUID()
+     const now = new Date().toISOString()
+-    const safeName = escapeStr(String(body.name).trim())
+-    const safeType = ['medication', 'supplement', 'therapy', 'other'].includes(body.type) ? escapeStr(body.type) : escapeStr('medication')
+-    const safeDosage = body.dosage ? escapeStr(String(body.dosage)) : 'NULL'
+-    const safeEndDate = isValidDate(body.endDate) ? escapeStr(body.endDate) : 'NULL'
+-    const safeNotes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
++    const safeName = String(body.name).trim()
++    const safeType = ['medication', 'supplement', 'therapy', 'other'].includes(body.type) ? body.type : 'medication'
++    const safeDosage = body.dosage ? String(body.dosage) : null
++    const safeEndDate = isValidDate(body.endDate) ? body.endDate : null
++    const safeNotes = body.notes ? String(body.notes) : null
+ 
+-    await teamDb(`INSERT INTO treatment_log (id, user_id, name, type, dosage, start_date, end_date, status, notes, created_at, updated_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${safeName}, ${safeType}, ${safeDosage}, ${escapeStr(body.startDate)}, ${safeEndDate}, ${escapeStr('active')}, ${safeNotes}, ${escapeStr(now)}, ${escapeStr(now)})`)
++    await teamDb(
++      `INSERT INTO treatment_log (id, user_id, name, type, dosage, start_date, end_date, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++      [id, body.userId, safeName, safeType, safeDosage, body.startDate, safeEndDate, 'active', safeNotes, now, now]
++    )
+ 
+     json(res, { id, ...body }, 201)
+   },
+@@ -855,41 +952,43 @@ const router = {
+     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.userId))) return
+ 
+-    const rows = await teamDb(`SELECT * FROM treatment_log WHERE user_id = ${escapeStr(params.userId)} ORDER BY start_date DESC, created_at DESC`)
++    const rows = await teamDb(`SELECT * FROM treatment_log WHERE user_id = ? ORDER BY start_date DESC, created_at DESC`, [params.userId])
+     json(res, rows)
+   },
+ 
+   'PUT /api/treatments/:id': async (req, res, params) => {
+     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid treatment ID format' }, 400)
+ 
+-    const rows = await teamDb(`SELECT user_id FROM treatment_log WHERE id = ${escapeStr(params.id)}`)
++    const rows = await teamDb(`SELECT user_id FROM treatment_log WHERE id = ?`, [params.id])
+     if (rows.length === 0) return json(res, { error: 'Treatment not found' }, 404)
+     if (!(await verifyUserAuth(req, res, rows[0].user_id))) return
+ 
+     const body = await parseBody(req)
+     const now = new Date().toISOString()
+     const updates = []
+-    if (body.name !== undefined) updates.push(`name = ${escapeStr(String(body.name).trim())}`)
+-    if (body.dosage !== undefined) updates.push(`dosage = ${body.dosage ? escapeStr(String(body.dosage)) : 'NULL'}`)
+-    if (body.endDate !== undefined) updates.push(`end_date = ${isValidDate(body.endDate) ? escapeStr(body.endDate) : 'NULL'}`)
+-    if (body.status !== undefined) updates.push(`status = ${['active', 'stopped'].includes(body.status) ? escapeStr(body.status) : escapeStr('active')}`)
+-    if (body.effective !== undefined) updates.push(`effective = ${['yes', 'no', 'unsure'].includes(body.effective) ? escapeStr(body.effective) : 'NULL'}`)
+-    if (body.notes !== undefined) updates.push(`notes = ${body.notes ? escapeStr(String(body.notes)) : 'NULL'}`)
++    const args = []
++    if (body.name !== undefined) { updates.push(`name = ?`); args.push(String(body.name).trim()) }
++    if (body.dosage !== undefined) { updates.push(`dosage = ?`); args.push(body.dosage ? String(body.dosage) : null) }
++    if (body.endDate !== undefined) { updates.push(`end_date = ?`); args.push(isValidDate(body.endDate) ? body.endDate : null) }
++    if (body.status !== undefined) { updates.push(`status = ?`); args.push(['active', 'stopped'].includes(body.status) ? body.status : 'active') }
++    if (body.effective !== undefined) { updates.push(`effective = ?`); args.push(['yes', 'no', 'unsure'].includes(body.effective) ? body.effective : null) }
++    if (body.notes !== undefined) { updates.push(`notes = ?`); args.push(body.notes ? String(body.notes) : null) }
+ 
+     if (updates.length === 0) return json(res, { error: 'No valid fields to update' }, 400)
+ 
+-    await teamDb(`UPDATE treatment_log SET ${updates.join(', ')}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(params.id)}`)
++    args.push(now, params.id)
++    await teamDb(`UPDATE treatment_log SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`, args)
+     json(res, { id: params.id, updated: true })
+   },
+ 
+   'DELETE /api/treatments/:id': async (req, res, params) => {
+     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid treatment ID format' }, 400)
+ 
+-    const rows = await teamDb(`SELECT user_id FROM treatment_log WHERE id = ${escapeStr(params.id)}`)
++    const rows = await teamDb(`SELECT user_id FROM treatment_log WHERE id = ?`, [params.id])
+     if (rows.length === 0) return json(res, { error: 'Treatment not found' }, 404)
+     if (!(await verifyUserAuth(req, res, rows[0].user_id))) return
+ 
+-    await teamDb(`DELETE FROM treatment_log WHERE id = ${escapeStr(params.id)}`)
++    await teamDb(`DELETE FROM treatment_log WHERE id = ?`, [params.id])
+     json(res, { success: true, deleted: true })
+   },
+ 
+@@ -898,11 +997,11 @@ const router = {
+     if (!isValidUUID(params.logId)) return json(res, { error: 'Invalid log ID format' }, 400)
+     
+     // Resolve log first to check authorization
+-    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ${escapeStr(params.logId)}`)
++    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ?`, [params.logId])
+     if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
+     if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
+     
+-    const rows = await teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ${escapeStr(params.logId)} ORDER BY severity DESC`)
++    const rows = await teamDb(`SELECT * FROM symptom_entries WHERE daily_log_id = ? ORDER BY severity DESC`, [params.logId])
+     json(res, rows)
+   },
+ 
+@@ -916,11 +1015,13 @@ const router = {
+     
+     const id = randomUUID()
+     const now = new Date().toISOString()
+-    const safeStart = escapeStr(body.periodStart)
+-    const safeEnd = isValidDate(body.periodEnd) ? escapeStr(body.periodEnd) : 'NULL'
+-    const safeNotes = body.notes ? escapeStr(String(body.notes)) : 'NULL'
++    const safeEnd = isValidDate(body.periodEnd) ? body.periodEnd : null
++    const safeNotes = body.notes ? String(body.notes) : null
+     
+-    await teamDb(`INSERT INTO cycles (id, user_id, period_start, period_end, notes, created_at) VALUES (${escapeStr(id)}, ${escapeStr(body.userId)}, ${safeStart}, ${safeEnd}, ${safeNotes}, ${escapeStr(now)})`)
++    await teamDb(
++      `INSERT INTO cycles (id, user_id, period_start, period_end, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
++      [id, body.userId, body.periodStart, safeEnd, safeNotes, now]
++    )
+     json(res, { id, ...body }, 201)
+   },
+ 
+@@ -928,7 +1029,7 @@ const router = {
+     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.userId))) return
+     
+-    const rows = await teamDb(`SELECT * FROM cycles WHERE user_id = ${escapeStr(params.userId)} ORDER BY period_start DESC`)
++    const rows = await teamDb(`SELECT * FROM cycles WHERE user_id = ? ORDER BY period_start DESC`, [params.userId])
+     json(res, rows)
+   },
+ 
+@@ -938,7 +1039,7 @@ const router = {
+     if (!(await verifyUserAuth(req, res, params.userId))) return
+     
+     // Calculate pain-by-phase from logged data
+-    const logRows = await teamDb(`SELECT dl.cycle_phase, dl.pain_level, dl.log_date FROM daily_logs dl WHERE dl.user_id = ${escapeStr(params.userId)} AND dl.pain_level IS NOT NULL ORDER BY dl.log_date`)
++    const logRows = await teamDb(`SELECT dl.cycle_phase, dl.pain_level, dl.log_date FROM daily_logs dl WHERE dl.user_id = ? AND dl.pain_level IS NOT NULL ORDER BY dl.log_date`, [params.userId])
+     
+     if (logRows.length === 0) {
+       return json(res, { painByPhase: {}, avgPain: null, totalLogs: 0 })
+@@ -976,8 +1077,8 @@ const router = {
+ 
+     // 1. Fetch all logs with symptoms
+     const logRows = await teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day 
+-      FROM daily_logs dl WHERE dl.user_id = ${escapeStr(userId)} AND dl.pain_level IS NOT NULL 
+-      ORDER BY dl.log_date ASC`)
++      FROM daily_logs dl WHERE dl.user_id = ? AND dl.pain_level IS NOT NULL 
++      ORDER BY dl.log_date ASC`, [userId])
+     
+     if (logRows.length < 5) {
+       return json(res, { patterns: [], message: 'Need at least 5 logged days for analysis' })
+@@ -990,9 +1091,10 @@ const router = {
+     }
+ 
+     // Fetch all symptoms
+-    const logIds = logRows.map(r => `'${r.id}'`).join(',')
++    const logIds = logRows.map(r => r.id)
++    const placeholders = logIds.map(() => '?').join(',')
+     const symptomRows = await teamDb(`SELECT se.daily_log_id, se.symptom_name, se.severity, se.symptom_icon 
+-      FROM symptom_entries se WHERE se.daily_log_id IN (${logIds})`)
++      FROM symptom_entries se WHERE se.daily_log_id IN (${placeholders})`, logIds)
+ 
+     // Group symptoms by log
+     const symptomsByLog = {}
+@@ -1249,14 +1351,13 @@ const router = {
+     
+     const id = randomUUID()
+     const now = new Date().toISOString()
+-    const safeUserId = escapeStr(body.userId || 'anonymous')
+-    const safeType = escapeStr(body.feedbackType)
+-    const safeTargetId = escapeStr(body.targetId || '')
+-    const safeTargetLabel = escapeStr(body.targetLabel || '')
+-    const safeRating = Number(body.rating)
+-    const safeComment = body.comment ? escapeStr(String(body.comment)) : 'NULL'
+-    
+-    await teamDb(`INSERT INTO clinical_feedback (id, user_id, feedback_type, target_id, target_label, rating, comment, created_at) VALUES (${escapeStr(id)}, ${safeUserId}, ${safeType}, ${safeTargetId}, ${safeTargetLabel}, ${safeRating}, ${safeComment}, ${escapeStr(now)})`)
++    const safeUserId = body.userId || 'anonymous'
++    const safeComment = body.comment ? String(body.comment) : null
++    
++    await teamDb(
++      `INSERT INTO clinical_feedback (id, user_id, feedback_type, target_id, target_label, rating, comment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
++      [id, safeUserId, body.feedbackType, body.targetId || '', body.targetLabel || '', Number(body.rating), safeComment, now]
++    )
+     json(res, { id, submitted: true }, 201)
+   },
+ 
+@@ -1276,13 +1377,13 @@ const router = {
+     
+     const id = randomUUID()
+     const now = new Date().toISOString()
+-    const safeReportId = escapeStr(body.reportId || '')
+-    const safeRole = escapeStr(body.userRole || 'patient')
+-    const safeRating = Number(body.rating)
+-    const safeComments = body.comments ? escapeStr(String(body.comments)) : 'NULL'
+-    const safeLesionMappings = body.lesionMappings ? escapeStr(String(body.lesionMappings)) : 'NULL'
++    const safeComments = body.comments ? String(body.comments) : null
++    const safeLesionMappings = body.lesionMappings ? String(body.lesionMappings) : null
+     
+-    await teamDb(`INSERT INTO feedback_logs (id, report_id, user_role, rating, comments, lesion_mappings, created_at) VALUES (${escapeStr(id)}, ${safeReportId}, ${safeRole}, ${safeRating}, ${safeComments}, ${safeLesionMappings}, ${escapeStr(now)})`)
++    await teamDb(
++      `INSERT INTO feedback_logs (id, report_id, user_role, rating, comments, lesion_mappings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
++      [id, body.reportId || '', body.userRole || 'patient', Number(body.rating), safeComments, safeLesionMappings, now]
++    )
+     json(res, { id, submitted: true }, 201)
+   },
+ 
+@@ -1299,7 +1400,7 @@ const router = {
+     }
+     
+     const safeEmail = email.toLowerCase()
+-    const existing = await teamDb(`SELECT id FROM users WHERE email = ${escapeStr(safeEmail)}`)
++    const existing = await teamDb(`SELECT id FROM users WHERE email = ?`, [safeEmail])
+     if (existing.length > 0) {
+       return json(res, { error: 'Email already registered' }, 409)
+     }
+@@ -1309,16 +1410,19 @@ const router = {
+     const passwordHash = hashPassword(password)
+     const userRole = role === 'clinician' ? 'clinician' : 'patient' // Clinicians may self-register; admin is never client-assignable
+     
+-    const safeName = escapeStr(displayName || '')
+-    const safeClinic = clinicName ? escapeStr(clinicName) : 'NULL'
+-    const safeSpecialty = specialty ? escapeStr(specialty) : 'NULL'
++    const safeName = displayName || ''
++    const safeClinic = clinicName || null
++    const safeSpecialty = specialty || null
+     
+     // Insert new user
+-    await teamDb(`INSERT INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES (${escapeStr(id)}, ${safeName}, ${escapeStr(safeEmail)}, ${escapeStr(passwordHash)}, ${escapeStr(userRole)}, ${safeClinic}, ${safeSpecialty}, 0, ${escapeStr(now)}, ${escapeStr(now)})`)
++    await teamDb(
++      `INSERT INTO users (id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
++      [id, safeName, safeEmail, passwordHash, userRole, safeClinic, safeSpecialty, now, now]
++    )
+     
+     // Create and save session token
+     const token = generateToken()
+-    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(id)}, ${escapeStr(now)})`)
++    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)`, [token, id, now])
+     
+     json(res, { id, email: safeEmail, displayName: displayName || '', role: userRole, token }, 201)
+   },
+@@ -1332,7 +1436,7 @@ const router = {
+     }
+     
+     const safeEmail = email.toLowerCase()
+-    const rows = await teamDb(`SELECT id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete FROM users WHERE email = ${escapeStr(safeEmail)}`)
++    const rows = await teamDb(`SELECT id, display_name, email, password_hash, role, clinic_name, specialty, onboarding_complete FROM users WHERE email = ?`, [safeEmail])
+     if (rows.length === 0) {
+       return json(res, { error: 'Invalid email or password' }, 401)
+     }
+@@ -1345,7 +1449,7 @@ const router = {
+     // Create and save session token
+     const token = generateToken()
+     const now = new Date().toISOString()
+-    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (${escapeStr(token)}, ${escapeStr(user.id)}, ${escapeStr(now)})`)
++    await teamDb(`INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)`, [token, user.id, now])
+     
+     json(res, {
+       id: user.id,
+@@ -1369,7 +1473,7 @@ const router = {
+     if (!isValidUUID(params.clinicianId)) return json(res, { error: 'Invalid clinician ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.clinicianId))) return
+ 
+-    const clinicianRows = await teamDb(`SELECT role FROM users WHERE id = ${escapeStr(params.clinicianId)}`)
++    const clinicianRows = await teamDb(`SELECT role FROM users WHERE id = ?`, [params.clinicianId])
+     if (clinicianRows.length === 0) return json(res, { error: 'Clinician not found' }, 404)
+     if (clinicianRows[0].role !== 'clinician') return json(res, { error: 'Only clinician accounts can generate invitations' }, 403)
+ 
+@@ -1379,7 +1483,10 @@ const router = {
+     const code = 'EB-' + randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()
+     const now = new Date().toISOString()
+ 
+-    await teamDb(`INSERT INTO clinic_invitations (id, clinician_id, code, access_level, status, created_at) VALUES (${escapeStr(id)}, ${escapeStr(params.clinicianId)}, ${escapeStr(code)}, ${escapeStr(accessLevel)}, 'pending', ${escapeStr(now)})`)
++    await teamDb(
++      `INSERT INTO clinic_invitations (id, clinician_id, code, access_level, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)`,
++      [id, params.clinicianId, code, accessLevel, now]
++    )
+     json(res, { id, code, accessLevel, status: 'pending', createdAt: now }, 201)
+   },
+ 
+@@ -1389,7 +1496,7 @@ const router = {
+ 
+     const rows = await teamDb(`SELECT ci.id, ci.code, ci.access_level, ci.status, ci.created_at, ci.accepted_at, u.display_name AS patient_name
+       FROM clinic_invitations ci LEFT JOIN users u ON u.id = ci.patient_id
+-      WHERE ci.clinician_id = ${escapeStr(params.clinicianId)} ORDER BY ci.created_at DESC`)
++      WHERE ci.clinician_id = ? ORDER BY ci.created_at DESC`, [params.clinicianId])
+     json(res, rows)
+   },
+ 
+@@ -1403,14 +1510,14 @@ const router = {
+     if (!body.code || typeof body.code !== 'string') return json(res, { error: 'Invite code is required' }, 400)
+ 
+     const normalizedCode = body.code.trim().toUpperCase()
+-    const inviteRows = await teamDb(`SELECT * FROM clinic_invitations WHERE code = ${escapeStr(normalizedCode)}`)
++    const inviteRows = await teamDb(`SELECT * FROM clinic_invitations WHERE code = ?`, [normalizedCode])
+     if (inviteRows.length === 0) return json(res, { error: 'Invite code not found' }, 404)
+     const invite = inviteRows[0]
+     if (invite.status !== 'pending') return json(res, { error: 'This invite code has already been used or revoked' }, 409)
+ 
+     const now = new Date().toISOString()
+-    await teamDb(`UPDATE clinic_invitations SET status = 'accepted', patient_id = ${escapeStr(body.patientId)}, accepted_at = ${escapeStr(now)} WHERE id = ${escapeStr(invite.id)}`)
+-    await teamDb(`UPDATE users SET clinician_id = ${escapeStr(invite.clinician_id)}, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(body.patientId)}`)
++    await teamDb(`UPDATE clinic_invitations SET status = 'accepted', patient_id = ?, accepted_at = ? WHERE id = ?`, [body.patientId, now, invite.id])
++    await teamDb(`UPDATE users SET clinician_id = ?, updated_at = ? WHERE id = ?`, [invite.clinician_id, now, body.patientId])
+     json(res, { success: true, clinicianId: invite.clinician_id, accessLevel: invite.access_level })
+   },
+ 
+@@ -1425,7 +1532,7 @@ const router = {
+     if (!(await verifyUserAuth(req, res, body.patientId))) return
+ 
+     const now = new Date().toISOString()
+-    await teamDb(`UPDATE users SET clinician_id = NULL, updated_at = ${escapeStr(now)} WHERE id = ${escapeStr(body.patientId)}`)
++    await teamDb(`UPDATE users SET clinician_id = NULL, updated_at = ? WHERE id = ?`, [now, body.patientId])
+     json(res, { success: true })
+   },
+ 
+@@ -1438,15 +1545,15 @@ const router = {
+     if (!isValidUUID(params.clinicianId)) return json(res, { error: 'Invalid clinician ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.clinicianId))) return
+ 
+-    const patientRows = await teamDb(`SELECT id, display_name, created_at FROM users WHERE clinician_id = ${escapeStr(params.clinicianId)}`)
++    const patientRows = await teamDb(`SELECT id, display_name, created_at FROM users WHERE clinician_id = ?`, [params.clinicianId])
+     if (patientRows.length === 0) return json(res, [])
+ 
+     const results = []
+     for (const p of patientRows) {
+       try {
+-        const lastLog = await teamDb(`SELECT log_date, cycle_phase FROM daily_logs WHERE user_id = ${escapeStr(p.id)} ORDER BY log_date DESC LIMIT 1`)
+-        const logCount = await teamDb(`SELECT COUNT(*) as c FROM daily_logs WHERE user_id = ${escapeStr(p.id)}`)
+-        const reportRows = await teamDb(`SELECT id, report_type, generated_at FROM doctor_reports WHERE user_id = ${escapeStr(p.id)} ORDER BY generated_at DESC`)
++        const lastLog = await teamDb(`SELECT log_date, cycle_phase FROM daily_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 1`, [p.id])
++        const logCount = await teamDb(`SELECT COUNT(*) as c FROM daily_logs WHERE user_id = ?`, [p.id])
++        const reportRows = await teamDb(`SELECT id, report_type, generated_at FROM doctor_reports WHERE user_id = ? ORDER BY generated_at DESC`, [p.id])
+         results.push({
+           id: p.id,
+           name: p.display_name || 'Unnamed patient',
+@@ -1476,7 +1583,7 @@ const router = {
+     if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+     if (!(await verifyUserAuth(req, res, params.userId))) return
+     
+-    const rows = await teamDb(`SELECT id, display_name, email, role, clinic_name, specialty, onboarding_complete, cycle_length_avg, last_period_start, created_at FROM users WHERE id = ${escapeStr(params.userId)}`)
++    const rows = await teamDb(`SELECT id, display_name, email, role, clinic_name, specialty, onboarding_complete, cycle_length_avg, last_period_start, created_at FROM users WHERE id = ?`, [params.userId])
+     if (rows.length === 0) return json(res, { error: 'User not found' }, 404)
+     const u = rows[0]
+     json(res, {
+diff --git a/src/App.jsx b/src/App.jsx
+index aa28c3d..cfb16bd 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -57,7 +57,12 @@ function App() {
+         cycleDay: l.cycle_day, cyclePhase: l.cycle_phase,
+         flowLevel: l.flow_level, notes: l.notes,
+         overallWellness: l.overall_wellness, isPeriodDay: !!l.is_period_day,
+-        symptoms: [],
++        // The API now returns each log's symptom_entries rows (see the
++        // GET /api/logs/:userId fix). Map them into the {id, name, icon}
++        // shape DoctorReport and other components expect.
++        symptoms: (l.symptoms || []).map(s => ({
++          id: s.id, name: s.symptom_name, icon: s.symptom_icon,
++        })),
+       }))
+       setRecentLogs(formatted)
+       setTodayLogged(formatted.some(l => l.date === today && l.painLevel != null))
+@@ -235,9 +240,18 @@ function App() {
+       try {
+         currentDayNum = getDayOfCycle(lastPeriodStart, cycleLength)
+         if (currentDayNum != null) {
++          // Ovulation happens ~14 days before the *next* period, not on a
++          // fixed day 15 — the luteal phase (post-ovulation) is the part of
++          // the cycle that stays roughly constant at ~14 days, while the
++          // follicular phase (pre-ovulation) is what stretches or shrinks
++          // when a cycle runs longer or shorter than 28 days. Anchoring off
++          // cycleLength instead of a hardcoded day keeps this in sync with
++          // apps like most standard cycle trackers (e.g. My Cycle), which
++          // predict ovulation the same way.
++          const ovulationDay = Math.max(1, cycleLength - 14)
+           if (currentDayNum <= 5) currentPhase = 'menstrual'
+-          else if (currentDayNum <= 14) currentPhase = 'follicular'
+-          else if (currentDayNum === 15) currentPhase = 'ovulatory'
++          else if (currentDayNum < ovulationDay) currentPhase = 'follicular'
++          else if (currentDayNum === ovulationDay) currentPhase = 'ovulatory'
+           else currentPhase = 'luteal'
+         }
+       } catch (e) {
+diff --git a/src/components/DoctorReport.jsx b/src/components/DoctorReport.jsx
+index 45209d0..0d3ee5d 100644
+--- a/src/components/DoctorReport.jsx
++++ b/src/components/DoctorReport.jsx
+@@ -379,7 +379,7 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
+           <div className="mb-8">
+             <h2 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
+               <span className="w-1 h-5 bg-endo-purple rounded-full inline-block" />
+-              AI-Detected Patterns <span class="text-[10px] font-normal text-gray-400">(Correlational)</span>
++              AI-Detected Patterns <span className="text-[10px] font-normal text-gray-400">(Correlational)</span>
+             </h2>
+             
+             <div className="bg-gradient-to-br from-endo-purple/5 to-endo-pink/5 rounded-xl p-4 border border-endo-lavender/20">
+@@ -437,12 +437,19 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
+               </thead>
+               <tbody>
+                 {(days || []).filter(d => !d.isFuture && d.painLevel > 0).slice(0, 30).map((day) => {
+-                  const style = PHASE_STYLES[day.phase]
++                  // day.phase can be null (e.g. logs saved before a period
++                  // start date was set, so no cycle phase could be computed).
++                  // PHASE_STYLES has no entry for null, so fall back to a
++                  // neutral "Unknown" style instead of crashing on
++                  // style.bg/style.text below.
++                  const style = PHASE_STYLES[day.phase] || {
++                    bg: 'bg-gray-100', text: 'text-gray-500', label: 'Unknown',
++                  }
+                   const painColor = getPainColor(day.painLevel)
+                   
+                   return (
+                     <tr key={day.date} className="border-b border-gray-100 hover:bg-gray-50">
+-                      <td className="py-2 px-2 text-xs text-gray-600">{day.date.slice(5)}</td>
++                      <td className="py-2 px-2 text-xs text-gray-600">{String(day.date).slice(5)}</td>
+                       <td className="py-2 px-2 text-xs text-gray-600">{day.dayNum}</td>
+                       <td className="py-2 px-2">
+                         <span className={`text-xs px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}>
+diff --git a/src/components/PremiumDeepReport.jsx b/src/components/PremiumDeepReport.jsx
+index f4f82fd..48d05be 100644
+--- a/src/components/PremiumDeepReport.jsx
++++ b/src/components/PremiumDeepReport.jsx
+@@ -29,15 +29,20 @@ export default function PremiumDeepReport({ cycleData, patterns, isPremium = tru
+   const { days } = cycleData || {}
+   const loggedDays = (days || []).filter(d => !d.isFuture && d.painLevel > 0)
+ 
+-  // Long-term trend: 4-week rolling averages  
++  // Long-term trend: rolling 7-day pain averages.
++  // Slides one day at a time (not three) so the chart actually shows a
++  // trajectory as soon as there's more than one week of data, instead of
++  // needing 10+ logged days before a second point ever appears. With the
++  // old step of 3, 9 logged days produced exactly one data point — which
++  // rendered as a single number instead of a "trend."
+   const rollingAverages = useMemo(() => {
+     if (loggedDays.length < 7) return []
+     const avgs = []
+-    for (let i = 0; i <= loggedDays.length - 7; i += 3) {
++    for (let i = 0; i <= loggedDays.length - 7; i += 1) {
+       const week = loggedDays.slice(i, i + 7)
+       const avg = week.reduce((s, d) => s + d.painLevel, 0) / week.length
+       avgs.push({
+-        week: Math.floor(i / 3) + 1,
++        week: i + 1,
+         avg: avg.toFixed(1),
+         startDate: week[0].date,
+       })
+@@ -88,7 +93,7 @@ export default function PremiumDeepReport({ cycleData, patterns, isPremium = tru
+         <div className="space-y-4">
+           <p className="text-xs text-gray-500">Rolling 7-day pain averages show your long-term trajectory.</p>
+           
+-          {rollingAverages.length > 0 ? (
++          {rollingAverages.length >= 2 ? (
+             <div className="bg-gray-50 rounded-xl p-4">
+               <div className="flex items-end gap-1 h-24">
+                 {rollingAverages.map((week, idx) => {
+@@ -102,15 +107,24 @@ export default function PremiumDeepReport({ cycleData, patterns, isPremium = tru
+                           height: `${height}%`,
+                           backgroundColor: `hsl(${340 - parseFloat(week.avg) * 20}, 70%, ${60 - parseFloat(week.avg) * 2}%)`,
+                         }}
+-                        title={`Week ${week.week}: ${week.avg}/10`}
++                        title={`Day ${week.week}: ${week.avg}/10`}
+                       />
+                     </div>
+                   )
+                 })}
+               </div>
+             </div>
++          ) : rollingAverages.length === 1 ? (
++            <div className="bg-gray-50 rounded-xl p-4 text-center">
++              <p className="text-2xl font-bold text-gray-700">{rollingAverages[0].avg}</p>
++              <p className="text-xs text-gray-500 mt-1">
++                First 7-day average logged. Keep tracking daily — one more logged day will start showing your trend over time.
++              </p>
++            </div>
+           ) : (
+-            <p className="text-sm text-gray-500 text-center py-4">Need more data (at least 7 logged days) for trend analysis.</p>
++            <p className="text-sm text-gray-500 text-center py-4">
++              Need at least 7 logged days for a 7-day average, and 8+ for a visible trend ({loggedDays.length} logged so far).
++            </p>
+           )}
+ 
+           {/* Sparkline summary */}

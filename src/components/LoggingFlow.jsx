@@ -20,7 +20,7 @@ import CycleInfoStep from './CycleInfoStep'
 import NotesStep from './NotesStep'
 import ConfirmationStep from './ConfirmationStep'
 
-const STEPS = [
+const STEPS_WITH_CYCLE = [
   'pain',
   'symptoms',
   'cycle',
@@ -28,14 +28,33 @@ const STEPS = [
   'confirmation',
 ]
 
-const STEP_INDICATORS = {
+const STEPS_NO_CYCLE = [
+  'pain',
+  'symptoms',
+  'notes',
+  'confirmation',
+]
+
+const STEP_INDICATORS_WITH_CYCLE = {
   pain: { num: 1, label: 'Pain' },
   symptoms: { num: 2, label: 'Symptoms' },
   cycle: { num: 3, label: 'Cycle' },
   notes: { num: 4, label: 'Notes' },
 }
 
-export default function LoggingFlow({ onComplete, onClose }) {
+const STEP_INDICATORS_NO_CYCLE = {
+  pain: { num: 1, label: 'Pain' },
+  symptoms: { num: 2, label: 'Symptoms' },
+  notes: { num: 3, label: 'Notes' },
+}
+
+// hasCycle: false skips the Cycle Info step entirely — for acyclic users
+// (e.g. post-hysterectomy) with no menstrual or hormone-therapy cycle to
+// log flow against.
+export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
+  const STEPS = hasCycle ? STEPS_WITH_CYCLE : STEPS_NO_CYCLE
+  const STEP_INDICATORS = hasCycle ? STEP_INDICATORS_WITH_CYCLE : STEP_INDICATORS_NO_CYCLE
+
   const [currentStep, setCurrentStep] = useState('pain')
   const [logData, setLogData] = useState({
     painLevel: null,
@@ -55,12 +74,12 @@ export default function LoggingFlow({ onComplete, onClose }) {
     if (field === '_next') {
       // Trigger next step from child components — goToStep is stable
       if (currentStep === 'pain') { setCurrentStep('symptoms'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-      else if (currentStep === 'symptoms') { setCurrentStep('cycle'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+      else if (currentStep === 'symptoms') { setCurrentStep(hasCycle ? 'cycle' : 'notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
       else if (currentStep === 'cycle') { setCurrentStep('notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
       return
     }
     setLogData(prev => ({ ...prev, [field]: value }))
-  }, [currentStep])
+  }, [currentStep, hasCycle])
 
   const goToStep = useCallback((step) => {
     setCurrentStep(step)

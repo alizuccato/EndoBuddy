@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_logs_cycle_phase ON daily_logs(cycle_phase)
 CREATE TABLE IF NOT EXISTS symptoms (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL UNIQUE,
-    category        TEXT NOT NULL,         -- pain, digestive, neurological, emotional, general, urinary
+    category        TEXT NOT NULL,         -- pain, digestive, neurological, emotional, general, urinary, bowel, thoracic
     icon            TEXT                   -- Emoji representation
 );
 
@@ -102,7 +102,21 @@ INSERT OR IGNORE INTO symptoms (name, category, icon) VALUES
     ('Constipation',    'digestive',    '🚫'),
     ('Diarrhea',        'digestive',    '💧'),
     ('Urinary urgency', 'urinary',      '🚽'),
-    ('Painful urination', 'urinary',    '🔥');
+    ('Painful urination', 'urinary',    '🔥'),
+    -- Bowel/rectal lesion-mapping symptoms (added to support broader
+    -- lesion mapping beyond typical uterine symptoms)
+    ('Painful bowel movements', 'bowel',    '😣'),
+    ('Rectal bleeding',         'bowel',    '🩸'),
+    ('Bowel spasms',            'bowel',    '🌀'),
+    ('Blood in stool',          'bowel',    '🔴'),
+    -- Additional bladder-specific symptoms
+    ('Blood in urine',          'urinary',  '🔴'),
+    ('Bladder pressure/fullness', 'urinary', '🎈'),
+    -- Thoracic (lung/diaphragm) lesion-mapping symptoms
+    ('Shoulder tip pain',           'thoracic', '💢'),
+    ('Chest pain (cycle-related)',  'thoracic', '💥'),
+    ('Shortness of breath',         'thoracic', '😮‍💨'),
+    ('Coughing blood',              'thoracic', '🚨');
 
 -- ============================================================
 -- SYMPTOM ENTRIES
@@ -141,7 +155,12 @@ INSERT OR IGNORE INTO pain_locations (name, body_region) VALUES
     ('Head',                'head'),
     ('Chest',               'chest'),
     ('Shoulders',           'back'),
-    ('Neck',                'back');
+    ('Neck',                'back'),
+    -- Added for broader lesion mapping (bowel, bladder, thoracic sites)
+    ('Bowel',               'abdomen'),
+    ('Bladder',             'pelvis'),
+    ('Diaphragm',           'chest'),
+    ('Lungs',               'chest');
 
 -- ============================================================
 -- PAIN ENTRIES

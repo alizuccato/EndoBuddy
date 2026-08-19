@@ -220,7 +220,13 @@ function App() {
   // empty states instead of a fake pre-filled calendar.
   const cycleData = useMemo(() => {
     const cycleLength = userProfile?.cycleLength || userProfile?.cycle_length_avg || 28
-    const lastPeriodStart = userProfile?.lastPeriodStart || userProfile?.last_period_start || null
+    const rawLastPeriodStart = userProfile?.lastPeriodStart || userProfile?.last_period_start || null
+    const cycleTrackingMode = userProfile?.cycleTrackingMode || userProfile?.cycle_tracking_mode || 'menstrual'
+    const hormoneCycleTracking = !!(userProfile?.hormoneCycleTracking ?? userProfile?.hormone_cycle_tracking)
+    const isAcyclic = cycleTrackingMode === 'acyclic'
+    // Acyclic users without hormone-cycle tracking never have a real cycle
+    // start date to compute against, regardless of what's stored.
+    const lastPeriodStart = (isAcyclic && !hormoneCycleTracking) ? null : rawLastPeriodStart
     const today = getLocalDateString()
 
     const days = recentLogs.map(log => ({
@@ -240,19 +246,25 @@ function App() {
       try {
         currentDayNum = getDayOfCycle(lastPeriodStart, cycleLength)
         if (currentDayNum != null) {
-          // Ovulation happens ~14 days before the *next* period, not on a
-          // fixed day 15 — the luteal phase (post-ovulation) is the part of
-          // the cycle that stays roughly constant at ~14 days, while the
-          // follicular phase (pre-ovulation) is what stretches or shrinks
-          // when a cycle runs longer or shorter than 28 days. Anchoring off
-          // cycleLength instead of a hardcoded day keeps this in sync with
-          // apps like most standard cycle trackers (e.g. My Cycle), which
-          // predict ovulation the same way.
-          const ovulationDay = Math.max(1, cycleLength - 14)
-          if (currentDayNum <= 5) currentPhase = 'menstrual'
-          else if (currentDayNum < ovulationDay) currentPhase = 'follicular'
-          else if (currentDayNum === ovulationDay) currentPhase = 'ovulatory'
-          else currentPhase = 'luteal'
+          if (isAcyclic && hormoneCycleTracking) {
+            // Hormone therapy pattern, not ovarian biology — a neutral day
+            // count/label rather than menstrual-phase language.
+            currentPhase = 'hormoneCycle'
+          } else {
+            // Ovulation happens ~14 days before the *next* period, not on a
+            // fixed day 15 — the luteal phase (post-ovulation) is the part of
+            // the cycle that stays roughly constant at ~14 days, while the
+            // follicular phase (pre-ovulation) is what stretches or shrinks
+            // when a cycle runs longer or shorter than 28 days. Anchoring off
+            // cycleLength instead of a hardcoded day keeps this in sync with
+            // apps like most standard cycle trackers (e.g. My Cycle), which
+            // predict ovulation the same way.
+            const ovulationDay = Math.max(1, cycleLength - 14)
+            if (currentDayNum <= 5) currentPhase = 'menstrual'
+            else if (currentDayNum < ovulationDay) currentPhase = 'follicular'
+            else if (currentDayNum === ovulationDay) currentPhase = 'ovulatory'
+            else currentPhase = 'luteal'
+          }
         }
       } catch (e) {
         console.error('Error computing cycle day:', e)
@@ -267,6 +279,11 @@ function App() {
       cycleLength,
       periodLength: 5,
       hasRealData: days.length > 0,
+      // Exposed so components can adapt copy/UI without re-deriving mode
+      // from userProfile themselves.
+      cycleTrackingMode,
+      hormoneCycleTracking,
+      hasCycle: !isAcyclic || hormoneCycleTracking,
     }
   }, [userProfile, recentLogs])
 
@@ -353,7 +370,7 @@ function App() {
         )}
 
         <main className="flex-1 animate-fadeIn">
-          {isPatient && showLoggingFlow && <LoggingFlow onComplete={handleLogComplete} onClose={handleCloseLogging} />}
+          {isPatient && showLoggingFlow && <LoggingFlow onComplete={handleLogComplete} onClose={handleCloseLogging} hasCycle={cycleData?.hasCycle !== false} />}
           {isPatient && !showLoggingFlow && currentView==='home' && <PhaseAwareHome onStartLogging={handleOpenLogging} todayLogged={todayLogged} recentLogs={recentLogs} cycleData={cycleData} isPremium={isPremium} onUpgrade={handleStartUpgrade} />}
           {isPatient && !showLoggingFlow && currentView==='insights' && <InsightsDashboard cycleData={cycleData} insights={patterns} />}
           {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} cycleData={cycleData} patterns={patterns} userId={userId} />}
@@ -476,7 +493,11 @@ function LockedFeature({ onUpgrade, feature = 'meals' }) {
 
 function PremiumView({ isPremium, onUpgrade, cycleData, patterns, userId }) {
   const [premiumTab, setPremiumTab] = useState('meals')
-  const phase = cycleData?.currentPhase || 'luteal'
+  // Passed through as-is (including null for acyclic users, or
+  // 'hormoneCycle' for hormone-therapy tracking) — PremiumMealPlans and
+  // PremiumExercises decide how to handle a non-menstrual phase themselves
+  // rather than having a fake 'luteal' phase forced on them here.
+  const phase = cycleData?.currentPhase
   return (
     <div className="max-w-4xl mx-auto px-6 py-8 pb-24 md:pb-8">
       <div className="flex items-center justify-between mb-6">

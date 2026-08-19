@@ -34,7 +34,20 @@ INSERT OR IGNORE INTO symptoms (name, category, icon) VALUES
     ('Night sweats',    'general',      '💦'),
     ('Weight gain',     'general',      '⚖️'),
     ('Hair thinning',   'general',      '💇'),
-    ('Appetite changes', 'digestive',   '🍽️');
+    ('Appetite changes', 'digestive',   '🍽️'),
+    -- Bowel/rectal lesion-mapping symptoms
+    ('Painful bowel movements', 'bowel',    '😣'),
+    ('Rectal bleeding',         'bowel',    '🩸'),
+    ('Bowel spasms',            'bowel',    '🌀'),
+    ('Blood in stool',          'bowel',    '🔴'),
+    -- Additional bladder-specific symptoms
+    ('Blood in urine',          'urinary',  '🔴'),
+    ('Bladder pressure/fullness', 'urinary', '🎈'),
+    -- Thoracic (lung/diaphragm) lesion-mapping symptoms
+    ('Shoulder tip pain',           'thoracic', '💢'),
+    ('Chest pain (cycle-related)',  'thoracic', '💥'),
+    ('Shortness of breath',         'thoracic', '😮‍💨'),
+    ('Coughing blood',              'thoracic', '🚨');
 
 -- Pain Locations
 INSERT OR IGNORE INTO pain_locations (name, body_region) VALUES
@@ -50,7 +63,12 @@ INSERT OR IGNORE INTO pain_locations (name, body_region) VALUES
     ('Shoulders',           'back'),
     ('Neck',                'back'),
     ('Ovaries',             'pelvis'),
-    ('Rectum',              'pelvis');
+    ('Rectum',              'pelvis'),
+    -- Added for broader lesion mapping (bowel, bladder, thoracic sites)
+    ('Bowel',               'abdomen'),
+    ('Bladder',              'pelvis'),
+    ('Diaphragm',            'chest'),
+    ('Lungs',                'chest');
 
 -- Medications
 INSERT OR IGNORE INTO medications (name, type, category) VALUES

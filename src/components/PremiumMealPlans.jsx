@@ -27,9 +27,17 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
   const [checkedItems, setCheckedItems] = useState({})
   const [copied, setCopied] = useState(false)
 
-  const phase = currentPhase || 'luteal'
-  const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
-  const allRecipes = RECIPES[phase] || RECIPES.luteal
+  // RECIPES is only keyed by the 4 real menstrual phases. For users with
+  // no cycle to key off (acyclic, or a hormone-therapy pattern that isn't
+  // an ovarian phase), show the full combined library under a neutral
+  // label rather than falsely claiming a "Luteal" (or any other) phase.
+  const hasRealPhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(currentPhase)
+  const phase = hasRealPhase ? currentPhase : 'luteal'
+  const phaseStyle = hasRealPhase ? (PHASE_STYLES[phase] || PHASE_STYLES.luteal) : PHASE_STYLES.off
+  const allRecipes = hasRealPhase
+    ? (RECIPES[phase] || RECIPES.luteal)
+    : Object.values(RECIPES).flat()
+  const phaseLabel = hasRealPhase ? `${phaseStyle.label} Phase` : 'All Recipes'
 
   const toggleFilter = useCallback((filter) => {
     setActiveFilters(prev => prev.includes(filter) ? prev.filter(f => f !== filter) : [...prev, filter])
@@ -112,8 +120,8 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
       <div className={`${phaseStyle.bg} -mx-6 -mt-6 px-6 py-3 mb-4 border-b ${phaseStyle.border}`}>
         <div className="flex items-center justify-between">
           <div>
-            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
-            <p className="text-sm text-gray-600 mt-0.5">{allRecipes.length} full recipes for this phase</p>
+            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseLabel}</span>
+            <p className="text-sm text-gray-600 mt-0.5">{allRecipes.length} full recipes{hasRealPhase ? ' for this phase' : ''}</p>
           </div>
           <span className="bg-white/80 text-xs font-medium px-2 py-1 rounded-full text-endo-purple">⭐ Premium</span>
         </div>
@@ -264,7 +272,7 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
           <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
             <div>
               <p className="text-sm font-semibold text-gray-800">Shopping List</p>
-              <p className="text-[10px] text-gray-500">{shoppingList.length} item{shoppingList.length !== 1 ? 's' : ''} for the {phaseStyle.label.toLowerCase()} recipes shown</p>
+              <p className="text-[10px] text-gray-500">{shoppingList.length} item{shoppingList.length !== 1 ? 's' : ''} for the {hasRealPhase ? phaseStyle.label.toLowerCase() + ' ' : ''}recipes shown</p>
             </div>
             <div className="flex items-center gap-2">
               <button

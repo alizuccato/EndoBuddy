@@ -51,10 +51,37 @@ const SYMPTOMS_BY_CATEGORY = {
     ]
   },
   urinary: {
-    label: '🚽 Urinary',
+    label: '🚽 Urinary & Bladder',
     symptoms: [
       { id: 19, name: 'Urinary urgency', icon: '🚽' },
       { id: 20, name: 'Painful urination', icon: '🔥' },
+      { id: 30, name: 'Blood in urine', icon: '🔴' },
+      { id: 31, name: 'Bladder pressure/fullness', icon: '🎈' },
+    ]
+  },
+  // Bowel/rectal-specific symptoms, distinct from the general "digestive"
+  // category above — these are the markers most associated with possible
+  // bowel-wall or rectovaginal lesion involvement rather than everyday GI
+  // upset, and are worth their own section for lesion mapping.
+  bowel: {
+    label: '🩹 Bowel & Rectal',
+    symptoms: [
+      { id: 26, name: 'Painful bowel movements', icon: '😣' },
+      { id: 27, name: 'Rectal bleeding', icon: '🩸' },
+      { id: 28, name: 'Bowel spasms', icon: '🌀' },
+      { id: 29, name: 'Blood in stool', icon: '🔴' },
+    ]
+  },
+  // Thoracic symptoms — referred/diaphragmatic and pulmonary markers
+  // associated with thoracic (lung/diaphragm) endometriosis. Shoulder tip
+  // pain in particular is a classic sign of diaphragmatic irritation.
+  thoracic: {
+    label: '🫁 Chest & Shoulder',
+    symptoms: [
+      { id: 32, name: 'Shoulder tip pain', icon: '💢' },
+      { id: 33, name: 'Chest pain (cycle-related)', icon: '💥' },
+      { id: 34, name: 'Shortness of breath', icon: '😮\u200d💨' },
+      { id: 35, name: 'Coughing blood', icon: '🚨' },
     ]
   },
 }
@@ -65,6 +92,23 @@ const ENDO_TERMS = {
   'Bloating': 'Endo belly / Abdominal distention',
   'Headache': 'Can be menstrual migraine',
   'Back pain': 'Lower back / Pelvic back pain',
+  'Painful bowel movements': 'Dyschezia — may suggest bowel/rectal involvement',
+  'Rectal bleeding': 'Cyclical rectal bleeding may suggest bowel involvement',
+  'Bowel spasms': 'Colicky bowel pain, often cycle-timed',
+  'Blood in stool': 'Cyclical blood in stool may suggest bowel involvement',
+  'Blood in urine': 'Cyclical hematuria may suggest bladder involvement',
+  'Bladder pressure/fullness': 'Suprapubic pressure, often worse before/during period',
+  'Shoulder tip pain': 'Classic sign of diaphragmatic irritation — often right-sided',
+  'Chest pain (cycle-related)': 'Catamenial chest pain, timed to your cycle',
+  'Shortness of breath': 'Cyclical breathlessness — seek care if sudden or severe',
+  'Coughing blood': 'Catamenial hemoptysis — flag to your doctor promptly',
+}
+
+// Categories that warrant a visible safety note, since some of their
+// symptoms (sudden breathlessness, coughing blood) can be urgent
+// regardless of cycle timing.
+const SAFETY_NOTE_CATEGORIES = {
+  thoracic: '⚠️ Sudden shortness of breath or coughing blood can be serious — seek prompt medical attention, even if it seems cycle-related.',
 }
 
 export default function SymptomGrid({ onSelect, selectedSymptoms = [], onNext }) {
@@ -172,6 +216,12 @@ export default function SymptomGrid({ onSelect, selectedSymptoms = [], onNext })
                   {category.symptoms.some(s => ENDO_TERMS[s.name]) && (
                     <p className="text-[10px] text-gray-400 mt-2 text-center">
                       💡 Tap for details on endo-specific terms
+                    </p>
+                  )}
+                  {/* Safety note for categories with potentially urgent symptoms */}
+                  {SAFETY_NOTE_CATEGORIES[key] && (
+                    <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2.5 py-2 mt-2 text-center leading-snug">
+                      {SAFETY_NOTE_CATEGORIES[key]}
                     </p>
                   )}
                 </div>

@@ -275,12 +275,17 @@ export async function getFeedbackStats() {
 // creating a brand new anonymous one, which used to silently orphan real
 // logins by switching localStorage over to a fresh empty account.
 export async function completeOnboarding(onboardingData, existingUserId) {
+  const cycleTrackingMode = onboardingData.cycleTrackingMode === 'acyclic' ? 'acyclic' : 'menstrual'
+  const hormoneCycleTracking = !!onboardingData.hormoneCycleTracking
+
   if (existingUserId) {
     await updateUser(existingUserId, {
       displayName: onboardingData.name || undefined,
       cycleLength: onboardingData.cycleLength || 28,
       lastPeriodStart: onboardingData.lastPeriodStart || undefined,
       onboardingComplete: 1,
+      cycleTrackingMode,
+      hormoneCycleTracking,
     })
     return await getUser(existingUserId)
   }
@@ -290,6 +295,8 @@ export async function completeOnboarding(onboardingData, existingUserId) {
     displayName: onboardingData.name || '',
     cycleLength: onboardingData.cycleLength || 28,
     lastPeriodStart: onboardingData.lastPeriodStart || null,
+    cycleTrackingMode,
+    hormoneCycleTracking,
   })
 
   return user

@@ -1,0 +1,1132 @@
+diff --git a/server.js b/server.js
+index 85681b4..159cb8f 100644
+--- a/server.js
++++ b/server.js
+@@ -106,6 +106,19 @@ try { await teamDb("ALTER TABLE users ADD COLUMN password_hash TEXT") } catch (e
+ // anywhere in this repo.
+ try { await teamDb("ALTER TABLE users ADD COLUMN onboarding_complete INTEGER DEFAULT 0") } catch (e) {}
+ 
++// Supports users without a menstrual cycle to track against (e.g. post-
++// hysterectomy, menopausal). 'menstrual' (default) computes cycle day/phase
++// from last_period_start as before; 'acyclic' turns that off. A user in
++// acyclic mode may still optionally track a cyclical hormone therapy
++// pattern (e.g. cyclic HRT) — when hormone_cycle_tracking is set, the
++// existing last_period_start/cycle_length_avg columns are repurposed to
++// represent that hormone cycle instead of a menstrual one; the app labels
++// it accordingly rather than showing menstrual-phase language. See
++// src/db/004_add_cycle_tracking_mode.sql for the documented migration
++// (not actually run against prod — same story as the columns above).
++try { await teamDb("ALTER TABLE users ADD COLUMN cycle_tracking_mode TEXT DEFAULT 'menstrual'") } catch (e) {}
++try { await teamDb("ALTER TABLE users ADD COLUMN hormone_cycle_tracking INTEGER DEFAULT 0") } catch (e) {}
++
+ // pain_level is the single most-used field in this entire app (every
+ // report, insight, and pattern is built from it) but — like the columns
+ // above — src/db/001_initial_schema.sql's daily_logs table doesn't
+@@ -632,10 +645,12 @@ const router = {
+     const safeRole = ['patient', 'clinician', 'admin'].includes(body.role) ? body.role : 'patient'
+     const safeClinic = body.clinicName || ''
+     const safeSpecialty = body.specialty || ''
++    const safeCycleMode = ['menstrual', 'acyclic'].includes(body.cycleTrackingMode) ? body.cycleTrackingMode : 'menstrual'
++    const safeHormoneTracking = body.hormoneCycleTracking ? 1 : 0
+     
+     await teamDb(
+-      `INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+-      [id, safeName, safeDob, safeTz, safeCycle, safeLps, now, now, safeRole, safeClinic, safeSpecialty]
++      `INSERT INTO users (id, display_name, date_of_birth, timezone, cycle_length_avg, last_period_start, onboarding_complete, created_at, updated_at, role, clinic_name, specialty, cycle_tracking_mode, hormone_cycle_tracking) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
++      [id, safeName, safeDob, safeTz, safeCycle, safeLps, now, now, safeRole, safeClinic, safeSpecialty, safeCycleMode, safeHormoneTracking]
+     )
+     json(res, { id, ...body }, 201)
+   },
+@@ -671,6 +686,8 @@ const router = {
+       clinicName: 'clinic_name',
+       specialty: 'specialty',
+       email: 'email',
++      cycleTrackingMode: 'cycle_tracking_mode',
++      hormoneCycleTracking: 'hormone_cycle_tracking',
+     }
+     
+     const updates = []
+@@ -680,6 +697,10 @@ const router = {
+         let val = body[field]
+         if (field === 'dateOfBirth' || field === 'lastPeriodStart') {
+           val = isValidDate(val) ? val : null
++        } else if (field === 'cycleTrackingMode') {
++          val = ['menstrual', 'acyclic'].includes(val) ? val : 'menstrual'
++        } else if (field === 'hormoneCycleTracking') {
++          val = val ? 1 : 0
+         } else if (typeof val === 'string') {
+           // val stays as-is; bound as a parameter below
+         } else if (field === 'cycleLength' || field === 'periodLength' || field === 'onboardingComplete') {
+diff --git a/src/App.jsx b/src/App.jsx
+index cfb16bd..b4c587a 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -220,7 +220,13 @@ function App() {
+   // empty states instead of a fake pre-filled calendar.
+   const cycleData = useMemo(() => {
+     const cycleLength = userProfile?.cycleLength || userProfile?.cycle_length_avg || 28
+-    const lastPeriodStart = userProfile?.lastPeriodStart || userProfile?.last_period_start || null
++    const rawLastPeriodStart = userProfile?.lastPeriodStart || userProfile?.last_period_start || null
++    const cycleTrackingMode = userProfile?.cycleTrackingMode || userProfile?.cycle_tracking_mode || 'menstrual'
++    const hormoneCycleTracking = !!(userProfile?.hormoneCycleTracking ?? userProfile?.hormone_cycle_tracking)
++    const isAcyclic = cycleTrackingMode === 'acyclic'
++    // Acyclic users without hormone-cycle tracking never have a real cycle
++    // start date to compute against, regardless of what's stored.
++    const lastPeriodStart = (isAcyclic && !hormoneCycleTracking) ? null : rawLastPeriodStart
+     const today = getLocalDateString()
+ 
+     const days = recentLogs.map(log => ({
+@@ -240,19 +246,25 @@ function App() {
+       try {
+         currentDayNum = getDayOfCycle(lastPeriodStart, cycleLength)
+         if (currentDayNum != null) {
+-          // Ovulation happens ~14 days before the *next* period, not on a
+-          // fixed day 15 — the luteal phase (post-ovulation) is the part of
+-          // the cycle that stays roughly constant at ~14 days, while the
+-          // follicular phase (pre-ovulation) is what stretches or shrinks
+-          // when a cycle runs longer or shorter than 28 days. Anchoring off
+-          // cycleLength instead of a hardcoded day keeps this in sync with
+-          // apps like most standard cycle trackers (e.g. My Cycle), which
+-          // predict ovulation the same way.
+-          const ovulationDay = Math.max(1, cycleLength - 14)
+-          if (currentDayNum <= 5) currentPhase = 'menstrual'
+-          else if (currentDayNum < ovulationDay) currentPhase = 'follicular'
+-          else if (currentDayNum === ovulationDay) currentPhase = 'ovulatory'
+-          else currentPhase = 'luteal'
++          if (isAcyclic && hormoneCycleTracking) {
++            // Hormone therapy pattern, not ovarian biology — a neutral day
++            // count/label rather than menstrual-phase language.
++            currentPhase = 'hormoneCycle'
++          } else {
++            // Ovulation happens ~14 days before the *next* period, not on a
++            // fixed day 15 — the luteal phase (post-ovulation) is the part of
++            // the cycle that stays roughly constant at ~14 days, while the
++            // follicular phase (pre-ovulation) is what stretches or shrinks
++            // when a cycle runs longer or shorter than 28 days. Anchoring off
++            // cycleLength instead of a hardcoded day keeps this in sync with
++            // apps like most standard cycle trackers (e.g. My Cycle), which
++            // predict ovulation the same way.
++            const ovulationDay = Math.max(1, cycleLength - 14)
++            if (currentDayNum <= 5) currentPhase = 'menstrual'
++            else if (currentDayNum < ovulationDay) currentPhase = 'follicular'
++            else if (currentDayNum === ovulationDay) currentPhase = 'ovulatory'
++            else currentPhase = 'luteal'
++          }
+         }
+       } catch (e) {
+         console.error('Error computing cycle day:', e)
+@@ -267,6 +279,11 @@ function App() {
+       cycleLength,
+       periodLength: 5,
+       hasRealData: days.length > 0,
++      // Exposed so components can adapt copy/UI without re-deriving mode
++      // from userProfile themselves.
++      cycleTrackingMode,
++      hormoneCycleTracking,
++      hasCycle: !isAcyclic || hormoneCycleTracking,
+     }
+   }, [userProfile, recentLogs])
+ 
+@@ -353,7 +370,7 @@ function App() {
+         )}
+ 
+         <main className="flex-1 animate-fadeIn">
+-          {isPatient && showLoggingFlow && <LoggingFlow onComplete={handleLogComplete} onClose={handleCloseLogging} />}
++          {isPatient && showLoggingFlow && <LoggingFlow onComplete={handleLogComplete} onClose={handleCloseLogging} hasCycle={cycleData?.hasCycle !== false} />}
+           {isPatient && !showLoggingFlow && currentView==='home' && <PhaseAwareHome onStartLogging={handleOpenLogging} todayLogged={todayLogged} recentLogs={recentLogs} cycleData={cycleData} isPremium={isPremium} onUpgrade={handleStartUpgrade} />}
+           {isPatient && !showLoggingFlow && currentView==='insights' && <InsightsDashboard cycleData={cycleData} insights={patterns} />}
+           {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} cycleData={cycleData} patterns={patterns} userId={userId} />}
+@@ -476,7 +493,11 @@ function LockedFeature({ onUpgrade, feature = 'meals' }) {
+ 
+ function PremiumView({ isPremium, onUpgrade, cycleData, patterns, userId }) {
+   const [premiumTab, setPremiumTab] = useState('meals')
+-  const phase = cycleData?.currentPhase || 'luteal'
++  // Passed through as-is (including null for acyclic users, or
++  // 'hormoneCycle' for hormone-therapy tracking) — PremiumMealPlans and
++  // PremiumExercises decide how to handle a non-menstrual phase themselves
++  // rather than having a fake 'luteal' phase forced on them here.
++  const phase = cycleData?.currentPhase
+   return (
+     <div className="max-w-4xl mx-auto px-6 py-8 pb-24 md:pb-8">
+       <div className="flex items-center justify-between mb-6">
+diff --git a/src/components/InsightsDashboard.jsx b/src/components/InsightsDashboard.jsx
+index 6135ffd..a5d4acb 100644
+--- a/src/components/InsightsDashboard.jsx
++++ b/src/components/InsightsDashboard.jsx
+@@ -20,12 +20,20 @@ import { PHASE_STYLES } from '../utils/mockData'
+ export default function InsightsDashboard({ cycleData, insights, onInsightAction }) {
+   const data = cycleData || {}
+   const hasInsights = insights && insights.length > 0
++  const hasCycle = data.hasCycle !== false
++  // CycleMap draws menstrual/follicular/ovulatory/luteal phase wedges,
++  // which only make sense for an actual menstrual cycle — not a hormone
++  // therapy pattern (no ovulation involved) and not acyclic tracking.
++  const hasPhaseSegments = data.cycleTrackingMode !== 'acyclic'
+   
+-  const currentPhaseStyle = PHASE_STYLES[data.currentPhase] || PHASE_STYLES.menstrual
++  const currentPhaseStyle = PHASE_STYLES[data.currentPhase] || PHASE_STYLES.off
++  const showsPhaseLabel = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(data.currentPhase)
+   
+-  // Calculate next period prediction
++  // Calculate next period prediction — only meaningful for users with an
++  // actual menstrual cycle being tracked.
+   const prediction = useMemo(() => {
+-    const startDate = new Date(data.cycleStartDate || Date.now())
++    if (!hasCycle || !data.cycleStartDate) return null
++    const startDate = new Date(data.cycleStartDate)
+     const cycleLen = data.cycleLength || 28
+     const nextPeriod = new Date(startDate.getTime() + cycleLen * 86400000)
+     const daysUntil = Math.ceil((nextPeriod.getTime() - Date.now()) / 86400000)
+@@ -35,7 +43,7 @@ export default function InsightsDashboard({ cycleData, insights, onInsightAction
+       daysUntil: daysUntil > 0 ? daysUntil : 0,
+       isImminent: daysUntil <= 3 && daysUntil >= 0,
+     }
+-  }, [data.cycleStartDate, data.cycleLength])
++  }, [hasCycle, data.cycleStartDate, data.cycleLength])
+ 
+   return (
+     <div className="max-w-4xl mx-auto px-4 py-6 pb-24 md:pb-8 space-y-6">
+@@ -57,44 +65,56 @@ export default function InsightsDashboard({ cycleData, insights, onInsightAction
+             </span>
+           </div>
+           
+-          {/* Period prediction */}
+-          <div className={`px-3 py-2 rounded-xl border ${prediction.isImminent ? 'bg-rose-50 border-rose-200' : 'bg-gray-50 border-gray-200'}`}>
+-            <div className="flex items-center gap-2">
+-              <span className="text-sm">📅</span>
+-              <div>
+-                <p className={`text-xs font-semibold ${prediction.isImminent ? 'text-rose-600' : 'text-gray-700'}`}>
+-                  {prediction.isImminent ? 'Expected soon' : `In ${prediction.daysUntil} days`}
+-                </p>
+-                <p className="text-[10px] text-gray-500">Next period: {prediction.nextPeriodDate}</p>
++          {/* Period prediction — only shown when the user has a cycle to predict */}
++          {prediction && (
++            <div className={`px-3 py-2 rounded-xl border ${prediction.isImminent ? 'bg-rose-50 border-rose-200' : 'bg-gray-50 border-gray-200'}`}>
++              <div className="flex items-center gap-2">
++                <span className="text-sm">📅</span>
++                <div>
++                  <p className={`text-xs font-semibold ${prediction.isImminent ? 'text-rose-600' : 'text-gray-700'}`}>
++                    {prediction.isImminent ? 'Expected soon' : `In ${prediction.daysUntil} days`}
++                  </p>
++                  <p className="text-[10px] text-gray-500">Next period: {prediction.nextPeriodDate}</p>
++                </div>
+               </div>
+             </div>
+-          </div>
++          )}
+         </div>
+       </div>
+ 
+       {/* Phase context message */}
+       <div className={`${currentPhaseStyle.bg} rounded-xl px-4 py-3 border ${currentPhaseStyle.border}`}>
+         <p className={`text-sm ${currentPhaseStyle.text}`}>
+-          <span className="font-semibold">{currentPhaseStyle.label} Phase: </span>
++          <span className="font-semibold">{currentPhaseStyle.label}{showsPhaseLabel ? ' Phase' : ''}: </span>
+           {currentPhaseStyle.description}
+           {data.currentDayNum && (
+             <span className="block text-xs mt-0.5 opacity-75">
+-              You are on Day {data.currentDayNum} of your cycle
++              You are on Day {data.currentDayNum} of your {data.currentPhase === 'hormoneCycle' ? 'hormone' : ''} cycle
+             </span>
+           )}
+         </p>
+       </div>
+ 
+-      {/* Primary Visual: Cycle Map */}
+-      <section>
+-        <div className="flex items-center gap-2 mb-3">
+-          <h3 className="font-semibold text-gray-900 text-sm">Cycle Map</h3>
+-          <span className="text-[10px] text-gray-400">Tap phases & days for details</span>
+-        </div>
+-        <div className="flex justify-center">
+-          <CycleMap cycleData={data} />
+-        </div>
+-      </section>
++      {/* Primary Visual: Cycle Map — only meaningful when there's an actual
++          menstrual or hormone-therapy cycle to segment into phases */}
++      {hasPhaseSegments ? (
++        <section>
++          <div className="flex items-center gap-2 mb-3">
++            <h3 className="font-semibold text-gray-900 text-sm">Cycle Map</h3>
++            <span className="text-[10px] text-gray-400">Tap phases & days for details</span>
++          </div>
++          <div className="flex justify-center">
++            <CycleMap cycleData={data} />
++          </div>
++        </section>
++      ) : (
++        <section className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-5 text-center">
++          <p className="text-sm text-gray-600">
++            {hasCycle ? "Your hormone cycle doesn't map to phase segments, so there's no cycle map to show." : "Cycle tracking is off, so there's no cycle map to show."}
++          </p>
++          <p className="text-xs text-gray-400 mt-1">Your symptom and pain trends below still track day-to-day.</p>
++        </section>
++      )}
+ 
+       {/* Secondary: AI Insight Cards */}
+       <section>
+diff --git a/src/components/LoggingFlow.jsx b/src/components/LoggingFlow.jsx
+index 05e622c..9d72c1c 100644
+--- a/src/components/LoggingFlow.jsx
++++ b/src/components/LoggingFlow.jsx
+@@ -20,7 +20,7 @@ import CycleInfoStep from './CycleInfoStep'
+ import NotesStep from './NotesStep'
+ import ConfirmationStep from './ConfirmationStep'
+ 
+-const STEPS = [
++const STEPS_WITH_CYCLE = [
+   'pain',
+   'symptoms',
+   'cycle',
+@@ -28,14 +28,33 @@ const STEPS = [
+   'confirmation',
+ ]
+ 
+-const STEP_INDICATORS = {
++const STEPS_NO_CYCLE = [
++  'pain',
++  'symptoms',
++  'notes',
++  'confirmation',
++]
++
++const STEP_INDICATORS_WITH_CYCLE = {
+   pain: { num: 1, label: 'Pain' },
+   symptoms: { num: 2, label: 'Symptoms' },
+   cycle: { num: 3, label: 'Cycle' },
+   notes: { num: 4, label: 'Notes' },
+ }
+ 
+-export default function LoggingFlow({ onComplete, onClose }) {
++const STEP_INDICATORS_NO_CYCLE = {
++  pain: { num: 1, label: 'Pain' },
++  symptoms: { num: 2, label: 'Symptoms' },
++  notes: { num: 3, label: 'Notes' },
++}
++
++// hasCycle: false skips the Cycle Info step entirely — for acyclic users
++// (e.g. post-hysterectomy) with no menstrual or hormone-therapy cycle to
++// log flow against.
++export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
++  const STEPS = hasCycle ? STEPS_WITH_CYCLE : STEPS_NO_CYCLE
++  const STEP_INDICATORS = hasCycle ? STEP_INDICATORS_WITH_CYCLE : STEP_INDICATORS_NO_CYCLE
++
+   const [currentStep, setCurrentStep] = useState('pain')
+   const [logData, setLogData] = useState({
+     painLevel: null,
+@@ -55,12 +74,12 @@ export default function LoggingFlow({ onComplete, onClose }) {
+     if (field === '_next') {
+       // Trigger next step from child components — goToStep is stable
+       if (currentStep === 'pain') { setCurrentStep('symptoms'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+-      else if (currentStep === 'symptoms') { setCurrentStep('cycle'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
++      else if (currentStep === 'symptoms') { setCurrentStep(hasCycle ? 'cycle' : 'notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+       else if (currentStep === 'cycle') { setCurrentStep('notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+       return
+     }
+     setLogData(prev => ({ ...prev, [field]: value }))
+-  }, [currentStep])
++  }, [currentStep, hasCycle])
+ 
+   const goToStep = useCallback((step) => {
+     setCurrentStep(step)
+diff --git a/src/components/OnboardingFlow.jsx b/src/components/OnboardingFlow.jsx
+index d00d27f..87483ce 100644
+--- a/src/components/OnboardingFlow.jsx
++++ b/src/components/OnboardingFlow.jsx
+@@ -36,6 +36,15 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
+     agreedToPrivacy: false,
+     agreedToTos: false,
+     ageVerified: false,
++    // 'menstrual' (default) or 'acyclic' — for patients without a
++    // menstrual cycle to track against (e.g. post-hysterectomy,
++    // menopausal). See Step 2/3 below.
++    cycleTrackingMode: 'menstrual',
++    // Only relevant when cycleTrackingMode is 'acyclic'. True if the
++    // person wants to track a cyclical hormone therapy pattern (e.g.
++    // cyclic HRT) using the same lastPeriodStart/cycleLength fields,
++    // just relabeled.
++    hormoneCycleTracking: false,
+   })
+   const [showCalendar, setShowCalendar] = useState(false)
+ 
+@@ -73,8 +82,15 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
+     if (onComplete) onComplete(onboardingData)
+   }, [onboardingData, onComplete])
+ 
+-  // Calculate current phase based on entered data
++  // Calculate current phase based on entered data. Acyclic users don't get
++  // a fabricated menstrual phase — either a neutral hormone-cycle day
++  // count (if they opted into hormone therapy tracking) or no phase at
++  // all (cycle tracking off).
+   const estimatedPhase = useMemo(() => {
++    if (onboardingData.cycleTrackingMode === 'acyclic') {
++      if (onboardingData.hormoneCycleTracking && onboardingData.lastPeriodStart) return 'hormoneCycle'
++      return 'off'
++    }
+     if (!onboardingData.lastPeriodStart) return 'follicular'
+     const cycleDay = getDayOfCycle(onboardingData.lastPeriodStart, onboardingData.cycleLength || 28)
+     if (cycleDay == null) return 'follicular'
+@@ -83,7 +99,7 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
+     if (cycleDay <= 14) return 'follicular'
+     if (cycleDay === 15) return 'ovulatory'
+     return 'luteal'
+-  }, [onboardingData.lastPeriodStart, onboardingData.cycleLength])
++  }, [onboardingData.cycleTrackingMode, onboardingData.hormoneCycleTracking, onboardingData.lastPeriodStart, onboardingData.cycleLength])
+ 
+   const phaseStyle = PHASE_STYLES[estimatedPhase] || PHASE_STYLES.follicular
+ 
+@@ -214,82 +230,212 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
+               Next
+             </button>
+           </div>
+-          <div className="text-center">
++          <div className="text-center space-y-2">
+             <button
+               onClick={() => {
+                 const defaultDate = getLocalDateString(new Date(Date.now() - 14 * 86400000))
+                 handleSelect('lastPeriodStart', defaultDate)
+                 handleNext()
+               }}
+-              className="text-sm text-gray-400 hover:text-gray-600"
++              className="block w-full text-sm text-gray-400 hover:text-gray-600"
+             >
+-              I'm not sure / I don't have regular periods
++              I'm not sure / my periods are irregular
++            </button>
++            <button
++              onClick={() => {
++                handleSelect('cycleTrackingMode', 'acyclic')
++                handleSelect('lastPeriodStart', null)
++                handleSelect('hormoneCycleTracking', false)
++                handleNext()
++              }}
++              className="block w-full text-sm text-gray-400 hover:text-gray-600"
++            >
++              I don't have periods (hysterectomy, menopause, etc.)
+             </button>
+           </div>
+         </div>
+       ),
+     },
+-    // Step 3: Cycle Rhythm
++    // Step 3: Cycle Rhythm (menstrual mode) or Hormone Therapy check (acyclic mode)
+     {
+-      render: () => (
+-        <div className="space-y-6 max-w-sm mx-auto">
+-          <div className="text-center">
+-            <div className="text-4xl mb-3">🔄</div>
+-            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+-              How many days does your cycle usually last?
+-            </h2>
+-            <p className="text-sm text-gray-500">
+-              Most cycles are between 25 and 35 days. If yours varies, we'll learn your rhythm over time.
+-            </p>
+-          </div>
++      render: () => {
++        if (onboardingData.cycleTrackingMode === 'acyclic') {
++          return (
++            <div className="space-y-6 max-w-sm mx-auto">
++              <div className="text-center">
++                <div className="text-4xl mb-3">💊</div>
++                <h2 className="text-2xl font-bold text-gray-900 mb-2">
++                  Are you on hormone therapy?
++                </h2>
++                <p className="text-sm text-gray-500">
++                  If you follow a cyclical pattern — like cyclic HRT patches, pills, or rings taken on a repeating
++                  schedule — we can track that pattern instead of a menstrual cycle. Otherwise, you can just log
++                  symptoms day-to-day, no cycle context needed.
++                </p>
++              </div>
+ 
+-          {/* Cycle length selector */}
+-          <div className="text-center">
+-            <div className="flex items-center justify-center gap-4">
+-              <button
+-                onClick={() => handleSelect('cycleLength', Math.max(21, (onboardingData.cycleLength || 28) - 1))}
+-                className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
+-              >
+-                −
+-              </button>
+-              <div className="text-center min-w-[100px]">
+-                <span className="text-5xl font-bold text-endo-purple">{onboardingData.cycleLength || 28}</span>
+-                <p className="text-sm text-gray-500 mt-1">days</p>
++              <div className="flex flex-col gap-3">
++                <button
++                  onClick={() => handleSelect('hormoneCycleTracking', true)}
++                  className={`px-6 py-3 rounded-xl text-sm font-medium border-2 transition-colors
++                    ${onboardingData.hormoneCycleTracking
++                      ? 'bg-endo-purple text-white border-endo-purple'
++                      : 'bg-gray-50 text-gray-700 border-gray-100 hover:border-endo-purple/30'}
++                  `}
++                >
++                  Yes, track my hormone therapy pattern
++                </button>
++                <button
++                  onClick={() => { handleSelect('hormoneCycleTracking', false); handleSelect('lastPeriodStart', null) }}
++                  className={`px-6 py-3 rounded-xl text-sm font-medium border-2 transition-colors
++                    ${!onboardingData.hormoneCycleTracking
++                      ? 'bg-endo-purple text-white border-endo-purple'
++                      : 'bg-gray-50 text-gray-700 border-gray-100 hover:border-endo-purple/30'}
++                  `}
++                >
++                  No, just log day-to-day
++                </button>
+               </div>
+-              <button
+-                onClick={() => handleSelect('cycleLength', Math.min(45, (onboardingData.cycleLength || 28) + 1))}
+-                className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
+-              >
+-                +
+-              </button>
++
++              {/* Sub-form: only shown once "Yes" is selected */}
++              {onboardingData.hormoneCycleTracking && (
++                <div className="space-y-4 pt-2 border-t border-gray-100">
++                  <div>
++                    <p className="text-sm text-gray-600 mb-2 text-center">
++                      When did your current hormone cycle most recently start?
++                    </p>
++                    <button
++                      onClick={() => setShowCalendar(!showCalendar)}
++                      className="w-full input-field text-center text-base py-3"
++                    >
++                      {onboardingData.lastPeriodStart
++                        ? new Date(onboardingData.lastPeriodStart + 'T00:00:00').toLocaleDateString('en-US', {
++                            month: 'long', day: 'numeric', year: 'numeric'
++                          })
++                        : 'Tap to select a date'}
++                    </button>
++                    {showCalendar && (
++                      <div className="card max-h-40 overflow-y-auto mt-2">
++                        {dayOptions.map(option => (
++                          <button
++                            key={option.value}
++                            onClick={() => {
++                              handleSelect('lastPeriodStart', option.value)
++                              setShowCalendar(false)
++                            }}
++                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors
++                              ${onboardingData.lastPeriodStart === option.value
++                                ? 'bg-endo-purple/10 text-endo-purple font-medium'
++                                : 'hover:bg-gray-50 text-gray-700'}
++                            `}
++                          >
++                            {option.label}
++                          </button>
++                        ))}
++                      </div>
++                    )}
++                  </div>
++
++                  <div className="text-center">
++                    <p className="text-sm text-gray-600 mb-2">How many days is your hormone cycle?</p>
++                    <div className="flex items-center justify-center gap-4">
++                      <button
++                        onClick={() => handleSelect('cycleLength', Math.max(14, (onboardingData.cycleLength || 28) - 1))}
++                        className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-lg font-bold text-gray-600"
++                      >
++                        −
++                      </button>
++                      <div className="text-center min-w-[80px]">
++                        <span className="text-3xl font-bold text-endo-purple">{onboardingData.cycleLength || 28}</span>
++                        <p className="text-xs text-gray-500">days</p>
++                      </div>
++                      <button
++                        onClick={() => handleSelect('cycleLength', Math.min(90, (onboardingData.cycleLength || 28) + 1))}
++                        className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-lg font-bold text-gray-600"
++                      >
++                        +
++                      </button>
++                    </div>
++                  </div>
++                </div>
++              )}
++
++              <div className="flex justify-center gap-3 mt-4">
++                <button onClick={handleBack} className="px-6 py-2.5 text-sm text-gray-500 font-medium">
++                  Back
++                </button>
++                <button
++                  onClick={handleNext}
++                  disabled={onboardingData.hormoneCycleTracking && !onboardingData.lastPeriodStart}
++                  className={`btn-primary px-8 py-2.5 ${onboardingData.hormoneCycleTracking && !onboardingData.lastPeriodStart ? 'opacity-50 cursor-not-allowed' : ''}`}
++                >
++                  Next
++                </button>
++              </div>
++            </div>
++          )
++        }
++
++        return (
++          <div className="space-y-6 max-w-sm mx-auto">
++            <div className="text-center">
++              <div className="text-4xl mb-3">🔄</div>
++              <h2 className="text-2xl font-bold text-gray-900 mb-2">
++                How many days does your cycle usually last?
++              </h2>
++              <p className="text-sm text-gray-500">
++                Most cycles are between 25 and 35 days. If yours varies, we'll learn your rhythm over time.
++              </p>
+             </div>
+-            {/* Slider track */}
+-            <div className="mt-4 px-4">
+-              <input
+-                type="range"
+-                min="21"
+-                max="45"
+-                value={onboardingData.cycleLength || 28}
+-                onChange={(e) => handleSelect('cycleLength', parseInt(e.target.value))}
+-                className="w-full accent-endo-purple"
+-              />
+-              <div className="flex justify-between text-xs text-gray-400 mt-1">
+-                <span>21 days</span>
+-                <span>45+ days</span>
++
++            {/* Cycle length selector */}
++            <div className="text-center">
++              <div className="flex items-center justify-center gap-4">
++                <button
++                  onClick={() => handleSelect('cycleLength', Math.max(21, (onboardingData.cycleLength || 28) - 1))}
++                  className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
++                >
++                  −
++                </button>
++                <div className="text-center min-w-[100px]">
++                  <span className="text-5xl font-bold text-endo-purple">{onboardingData.cycleLength || 28}</span>
++                  <p className="text-sm text-gray-500 mt-1">days</p>
++                </div>
++                <button
++                  onClick={() => handleSelect('cycleLength', Math.min(45, (onboardingData.cycleLength || 28) + 1))}
++                  className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
++                >
++                  +
++                </button>
++              </div>
++              {/* Slider track */}
++              <div className="mt-4 px-4">
++                <input
++                  type="range"
++                  min="21"
++                  max="45"
++                  value={onboardingData.cycleLength || 28}
++                  onChange={(e) => handleSelect('cycleLength', parseInt(e.target.value))}
++                  className="w-full accent-endo-purple"
++                />
++                <div className="flex justify-between text-xs text-gray-400 mt-1">
++                  <span>21 days</span>
++                  <span>45+ days</span>
++                </div>
+               </div>
+             </div>
+-          </div>
+ 
+-          <div className="flex justify-center gap-3 mt-4">
+-            <button onClick={handleBack} className="px-6 py-2.5 text-sm text-gray-500 font-medium">
+-              Back
+-            </button>
+-            <button onClick={handleNext} className="btn-primary px-8 py-2.5">
+-              Next
+-            </button>
++            <div className="flex justify-center gap-3 mt-4">
++              <button onClick={handleBack} className="px-6 py-2.5 text-sm text-gray-500 font-medium">
++                Back
++              </button>
++              <button onClick={handleNext} className="btn-primary px-8 py-2.5">
++                Next
++              </button>
++            </div>
+           </div>
+-        </div>
+-      ),
++        )
++      },
+     },
+     // Step 4: Symptom Baseline
+     {
+@@ -459,18 +605,23 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
+               You're all set!
+             </h2>
+ 
+-            {/* Phase context */}
++            {/* Phase context (menstrual and hormone-cycle modes) or a
++                neutral "tracking off" card (acyclic, no hormone tracking) */}
+             <div className={`rounded-2xl p-4 ${phaseStyle.bg} border ${phaseStyle.border}`}>
+               <div className="flex items-center justify-center gap-2 mb-2">
+                 <div className={`w-3 h-3 rounded-full ${phaseStyle.dot}`} />
+-                <span className={`font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
++                <span className={`font-semibold ${phaseStyle.text}`}>
++                  {estimatedPhase === 'off' || estimatedPhase === 'hormoneCycle' ? phaseStyle.label : `${phaseStyle.label} Phase`}
++                </span>
+               </div>
+               <p className={`text-sm ${phaseStyle.text} opacity-80`}>
+                 {phaseStyle.description}
+               </p>
+               {totalSymptoms > 0 && (
+                 <p className="text-xs mt-2 opacity-60">
+-                  Tracking {totalSymptoms} symptom{totalSymptoms > 1 ? 's' : ''} · {onboardingData.cycleLength}-day cycles
++                  {estimatedPhase === 'off' && `Tracking ${totalSymptoms} symptom${totalSymptoms > 1 ? 's' : ''}`}
++                  {estimatedPhase === 'hormoneCycle' && `Tracking ${totalSymptoms} symptom${totalSymptoms > 1 ? 's' : ''} · ${onboardingData.cycleLength}-day hormone cycle`}
++                  {estimatedPhase !== 'off' && estimatedPhase !== 'hormoneCycle' && `Tracking ${totalSymptoms} symptom${totalSymptoms > 1 ? 's' : ''} · ${onboardingData.cycleLength}-day cycles`}
+                 </p>
+               )}
+             </div>
+diff --git a/src/components/PhaseAwareHome.jsx b/src/components/PhaseAwareHome.jsx
+index a6aa510..8cd750d 100644
+--- a/src/components/PhaseAwareHome.jsx
++++ b/src/components/PhaseAwareHome.jsx
+@@ -45,24 +45,33 @@ const PHASE_CONTENT = {
+   },
+ }
+ 
++// Phases with dedicated meal/movement/rest content in PHASE_CONTENT and
++// phase-wellness-library.json — content that assumes an ovarian cycle.
++// Acyclic states ('hormoneCycle', 'off') deliberately have no entry here,
++// since that content wouldn't be accurate for them.
++const PHASES_WITH_WELLNESS_CONTENT = ['menstrual', 'follicular', 'ovulatory', 'luteal']
++
+ export default function PhaseAwareHome({ onStartLogging, todayLogged, recentLogs, cycleData, isPremium, onUpgrade }) {
+   const data = cycleData || {}
+-  const phase = data.currentPhase || 'luteal'
++  const hasCycle = data.hasCycle !== false
++  const phase = data.currentPhase || (hasCycle ? 'luteal' : 'off')
++  const hasPhaseWellnessContent = PHASES_WITH_WELLNESS_CONTENT.includes(phase)
+   const dayNum = data.currentDayNum || 1
+   const cycleLen = data.cycleLength || 28
+   const content = PHASE_CONTENT[phase] || PHASE_CONTENT.luteal
+-  const style = PHASE_STYLES[phase] || PHASE_STYLES.luteal
++  const style = PHASE_STYLES[phase] || PHASE_STYLES.off
+   
+   const [endoFactDismissed, setEndoFactDismissed] = useState(false)
+   const [currentFactIndex, setCurrentFactIndex] = useState(0)
+ 
+   // Get wellness data from the library
+   const phaseWellness = useMemo(() => {
++    if (!hasPhaseWellnessContent) return null
+     try {
+       const phases = wellnessData?.phases || {}
+       return phases[phase] || null
+     } catch { return null }
+-  }, [phase])
++  }, [phase, hasPhaseWellnessContent])
+ 
+   const meals = phaseWellness?.meals || []
+   const tips = phaseWellness?.lifestyle_tips || []
+@@ -71,7 +80,7 @@ export default function PhaseAwareHome({ onStartLogging, todayLogged, recentLogs
+   const currentFact = endoFacts[currentFactIndex % Math.max(endoFacts.length, 1)]
+ 
+   const loggedDays = recentLogs?.length || 0
+-  const progress = Math.min(100, Math.round((loggedDays / cycleLen) * 100))
++  const progress = hasPhaseWellnessContent ? Math.min(100, Math.round((loggedDays / cycleLen) * 100)) : Math.min(100, loggedDays * 10)
+   const ringCircumference = 2 * Math.PI * 54
+   const ringOffset = ringCircumference - (progress / 100) * ringCircumference
+ 
+@@ -79,6 +88,69 @@ export default function PhaseAwareHome({ onStartLogging, todayLogged, recentLogs
+     weekday: 'long', month: 'long', day: 'numeric'
+   })
+ 
++  // Acyclic users (no menstrual cycle, no hormone-cycle tracking): a
++  // simplified home screen without phase-based wellness content, which
++  // wouldn't be accurate for them. Still supports logging and progress.
++  if (!hasPhaseWellnessContent) {
++    return (
++      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-indigo-50/20 transition-all duration-500">
++        <div className="max-w-lg mx-auto px-5 py-6 pb-28">
++          <div className="flex items-center justify-between mb-6">
++            <div className="flex items-center gap-2">
++              <div className={`w-2.5 h-2.5 rounded-full ${style.dot}`} />
++              <span className={`text-xs font-semibold ${style.text}`}>
++                {style.label}{phase === 'hormoneCycle' ? ` · Day ${dayNum}` : ''}
++              </span>
++            </div>
++            <span className="text-[11px] text-gray-400">{today}</span>
++          </div>
++
++          <div className="flex items-start justify-between mb-2">
++            <div className="flex-1">
++              <h1 className="text-xl font-bold text-gray-900 leading-tight">
++                {phase === 'hormoneCycle' ? "Tracking your hormone therapy pattern." : "Log how you're feeling today."}
++              </h1>
++              <p className="text-xs text-gray-500 mt-1">{style.description}</p>
++            </div>
++            {!isPremium && (
++              <button onClick={onUpgrade} className="flex-shrink-0 bg-gradient-to-r from-endo-purple to-endo-pink text-white text-[10px] font-bold px-2.5 py-1.5 rounded-full shadow-sm ml-2 hover:opacity-90">
++                ⭐ Premium
++              </button>
++            )}
++          </div>
++
++          <div className="flex justify-center mb-6 mt-4">
++            <div className="relative">
++              <svg width="130" height="130" className="transform -rotate-90">
++                <circle cx="65" cy="65" r="50" fill="none" stroke="#E5E7EB" strokeWidth="5" />
++                <circle cx="65" cy="65" r="50" fill="none"
++                  stroke={style.color} strokeWidth="5" strokeLinecap="round"
++                  strokeDasharray={ringCircumference} strokeDashoffset={ringOffset}
++                  className="transition-all duration-700 ease-out" />
++              </svg>
++              <button onClick={onStartLogging}
++                className="absolute inset-0 m-auto w-20 h-20 rounded-full bg-white shadow-lg hover:shadow-xl flex flex-col items-center justify-center transition-all hover:scale-105 active:scale-95 border-2 border-gray-100">
++                <span className="text-xl mb-0.5">{todayLogged ? '✅' : '+'}</span>
++                <span className="text-[9px] font-semibold text-gray-600">{todayLogged ? 'Logged' : 'Log Now'}</span>
++              </button>
++              <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[9px] font-medium text-gray-400 whitespace-nowrap">
++                {loggedDays} day{loggedDays === 1 ? '' : 's'} logged
++              </span>
++            </div>
++          </div>
++
++          <p className="text-xs text-center text-gray-400 mb-5 -mt-2">
++            {todayLogged ? "✅ Today logged." : loggedDays > 0 ? `Log today to keep your streak going.` : "Log your first day to start spotting patterns."}
++          </p>
++
++          {!todayLogged && recentLogs.length === 0 && (
++            <div className="mt-4"><EmpathyMessage isFirstLog={true} painLevel={0} /></div>
++          )}
++        </div>
++      </div>
++    )
++  }
++
+   return (
+     <div className={`min-h-screen ${content.theme.bg} transition-all duration-500`}>
+       <div className="max-w-lg mx-auto px-5 py-6 pb-28">
+diff --git a/src/components/PremiumExercises.jsx b/src/components/PremiumExercises.jsx
+index 99f9ffe..e785a28 100644
+--- a/src/components/PremiumExercises.jsx
++++ b/src/components/PremiumExercises.jsx
+@@ -25,9 +25,16 @@ export default function PremiumExercises({ currentPhase, isPremium = true }) {
+   const [expandedExercise, setExpandedExercise] = useState(null)
+   const [gentleDayMode, setGentleDayMode] = useState(false)
+ 
+-  const phase = currentPhase || 'luteal'
+-  const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
+-  const allExercises = EXERCISES[phase] || EXERCISES.luteal
++  // EXERCISES is only keyed by the 4 real menstrual phases. Same rationale
++  // as PremiumMealPlans: show the combined library under a neutral label
++  // for users with no real phase to key off.
++  const hasRealPhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(currentPhase)
++  const phase = hasRealPhase ? currentPhase : 'luteal'
++  const phaseStyle = hasRealPhase ? (PHASE_STYLES[phase] || PHASE_STYLES.luteal) : PHASE_STYLES.off
++  const allExercises = hasRealPhase
++    ? (EXERCISES[phase] || EXERCISES.luteal)
++    : Object.values(EXERCISES).flat()
++  const phaseLabel = hasRealPhase ? `${phaseStyle.label} Phase` : 'All Movement Guides'
+ 
+   const visibleExercises = useMemo(() => {
+     let list = allExercises
+@@ -52,8 +59,8 @@ export default function PremiumExercises({ currentPhase, isPremium = true }) {
+       <div className={`${phaseStyle.bg} -mx-6 -mt-6 px-6 py-3 mb-4 border-b ${phaseStyle.border}`}>
+         <div className="flex items-center justify-between">
+           <div>
+-            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
+-            <p className="text-sm text-gray-600 mt-0.5">{allExercises.length} movement guides for this phase</p>
++            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseLabel}</span>
++            <p className="text-sm text-gray-600 mt-0.5">{allExercises.length} movement guides{hasRealPhase ? ' for this phase' : ''}</p>
+           </div>
+           <span className="bg-white/80 text-xs font-medium px-2 py-1 rounded-full text-endo-purple">⭐ Premium</span>
+         </div>
+diff --git a/src/components/PremiumMealPlans.jsx b/src/components/PremiumMealPlans.jsx
+index 523a088..94d368e 100644
+--- a/src/components/PremiumMealPlans.jsx
++++ b/src/components/PremiumMealPlans.jsx
+@@ -27,9 +27,17 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+   const [checkedItems, setCheckedItems] = useState({})
+   const [copied, setCopied] = useState(false)
+ 
+-  const phase = currentPhase || 'luteal'
+-  const phaseStyle = PHASE_STYLES[phase] || PHASE_STYLES.luteal
+-  const allRecipes = RECIPES[phase] || RECIPES.luteal
++  // RECIPES is only keyed by the 4 real menstrual phases. For users with
++  // no cycle to key off (acyclic, or a hormone-therapy pattern that isn't
++  // an ovarian phase), show the full combined library under a neutral
++  // label rather than falsely claiming a "Luteal" (or any other) phase.
++  const hasRealPhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(currentPhase)
++  const phase = hasRealPhase ? currentPhase : 'luteal'
++  const phaseStyle = hasRealPhase ? (PHASE_STYLES[phase] || PHASE_STYLES.luteal) : PHASE_STYLES.off
++  const allRecipes = hasRealPhase
++    ? (RECIPES[phase] || RECIPES.luteal)
++    : Object.values(RECIPES).flat()
++  const phaseLabel = hasRealPhase ? `${phaseStyle.label} Phase` : 'All Recipes'
+ 
+   const toggleFilter = useCallback((filter) => {
+     setActiveFilters(prev => prev.includes(filter) ? prev.filter(f => f !== filter) : [...prev, filter])
+@@ -112,8 +120,8 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+       <div className={`${phaseStyle.bg} -mx-6 -mt-6 px-6 py-3 mb-4 border-b ${phaseStyle.border}`}>
+         <div className="flex items-center justify-between">
+           <div>
+-            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
+-            <p className="text-sm text-gray-600 mt-0.5">{allRecipes.length} full recipes for this phase</p>
++            <span className={`text-xs font-semibold ${phaseStyle.text}`}>{phaseLabel}</span>
++            <p className="text-sm text-gray-600 mt-0.5">{allRecipes.length} full recipes{hasRealPhase ? ' for this phase' : ''}</p>
+           </div>
+           <span className="bg-white/80 text-xs font-medium px-2 py-1 rounded-full text-endo-purple">⭐ Premium</span>
+         </div>
+@@ -264,7 +272,7 @@ export default function PremiumMealPlans({ currentPhase, isPremium = true }) {
+           <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
+             <div>
+               <p className="text-sm font-semibold text-gray-800">Shopping List</p>
+-              <p className="text-[10px] text-gray-500">{shoppingList.length} item{shoppingList.length !== 1 ? 's' : ''} for the {phaseStyle.label.toLowerCase()} recipes shown</p>
++              <p className="text-[10px] text-gray-500">{shoppingList.length} item{shoppingList.length !== 1 ? 's' : ''} for the {hasRealPhase ? phaseStyle.label.toLowerCase() + ' ' : ''}recipes shown</p>
+             </div>
+             <div className="flex items-center gap-2">
+               <button
+diff --git a/src/components/SymptomGrid.jsx b/src/components/SymptomGrid.jsx
+index 4556f29..c06b150 100644
+--- a/src/components/SymptomGrid.jsx
++++ b/src/components/SymptomGrid.jsx
+@@ -51,10 +51,37 @@ const SYMPTOMS_BY_CATEGORY = {
+     ]
+   },
+   urinary: {
+-    label: '🚽 Urinary',
++    label: '🚽 Urinary & Bladder',
+     symptoms: [
+       { id: 19, name: 'Urinary urgency', icon: '🚽' },
+       { id: 20, name: 'Painful urination', icon: '🔥' },
++      { id: 30, name: 'Blood in urine', icon: '🔴' },
++      { id: 31, name: 'Bladder pressure/fullness', icon: '🎈' },
++    ]
++  },
++  // Bowel/rectal-specific symptoms, distinct from the general "digestive"
++  // category above — these are the markers most associated with possible
++  // bowel-wall or rectovaginal lesion involvement rather than everyday GI
++  // upset, and are worth their own section for lesion mapping.
++  bowel: {
++    label: '🩹 Bowel & Rectal',
++    symptoms: [
++      { id: 26, name: 'Painful bowel movements', icon: '😣' },
++      { id: 27, name: 'Rectal bleeding', icon: '🩸' },
++      { id: 28, name: 'Bowel spasms', icon: '🌀' },
++      { id: 29, name: 'Blood in stool', icon: '🔴' },
++    ]
++  },
++  // Thoracic symptoms — referred/diaphragmatic and pulmonary markers
++  // associated with thoracic (lung/diaphragm) endometriosis. Shoulder tip
++  // pain in particular is a classic sign of diaphragmatic irritation.
++  thoracic: {
++    label: '🫁 Chest & Shoulder',
++    symptoms: [
++      { id: 32, name: 'Shoulder tip pain', icon: '💢' },
++      { id: 33, name: 'Chest pain (cycle-related)', icon: '💥' },
++      { id: 34, name: 'Shortness of breath', icon: '😮\u200d💨' },
++      { id: 35, name: 'Coughing blood', icon: '🚨' },
+     ]
+   },
+ }
+@@ -65,6 +92,23 @@ const ENDO_TERMS = {
+   'Bloating': 'Endo belly / Abdominal distention',
+   'Headache': 'Can be menstrual migraine',
+   'Back pain': 'Lower back / Pelvic back pain',
++  'Painful bowel movements': 'Dyschezia — may suggest bowel/rectal involvement',
++  'Rectal bleeding': 'Cyclical rectal bleeding may suggest bowel involvement',
++  'Bowel spasms': 'Colicky bowel pain, often cycle-timed',
++  'Blood in stool': 'Cyclical blood in stool may suggest bowel involvement',
++  'Blood in urine': 'Cyclical hematuria may suggest bladder involvement',
++  'Bladder pressure/fullness': 'Suprapubic pressure, often worse before/during period',
++  'Shoulder tip pain': 'Classic sign of diaphragmatic irritation — often right-sided',
++  'Chest pain (cycle-related)': 'Catamenial chest pain, timed to your cycle',
++  'Shortness of breath': 'Cyclical breathlessness — seek care if sudden or severe',
++  'Coughing blood': 'Catamenial hemoptysis — flag to your doctor promptly',
++}
++
++// Categories that warrant a visible safety note, since some of their
++// symptoms (sudden breathlessness, coughing blood) can be urgent
++// regardless of cycle timing.
++const SAFETY_NOTE_CATEGORIES = {
++  thoracic: '⚠️ Sudden shortness of breath or coughing blood can be serious — seek prompt medical attention, even if it seems cycle-related.',
+ }
+ 
+ export default function SymptomGrid({ onSelect, selectedSymptoms = [], onNext }) {
+@@ -174,6 +218,12 @@ export default function SymptomGrid({ onSelect, selectedSymptoms = [], onNext })
+                       💡 Tap for details on endo-specific terms
+                     </p>
+                   )}
++                  {/* Safety note for categories with potentially urgent symptoms */}
++                  {SAFETY_NOTE_CATEGORIES[key] && (
++                    <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2.5 py-2 mt-2 text-center leading-snug">
++                      {SAFETY_NOTE_CATEGORIES[key]}
++                    </p>
++                  )}
+                 </div>
+               )}
+             </div>
+diff --git a/src/db/001_initial_schema.sql b/src/db/001_initial_schema.sql
+index 175a641..73e3031 100644
+--- a/src/db/001_initial_schema.sql
++++ b/src/db/001_initial_schema.sql
+@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_logs_cycle_phase ON daily_logs(cycle_phase)
+ CREATE TABLE IF NOT EXISTS symptoms (
+     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+     name            TEXT NOT NULL UNIQUE,
+-    category        TEXT NOT NULL,         -- pain, digestive, neurological, emotional, general, urinary
++    category        TEXT NOT NULL,         -- pain, digestive, neurological, emotional, general, urinary, bowel, thoracic
+     icon            TEXT                   -- Emoji representation
+ );
+ 
+@@ -102,7 +102,21 @@ INSERT OR IGNORE INTO symptoms (name, category, icon) VALUES
+     ('Constipation',    'digestive',    '🚫'),
+     ('Diarrhea',        'digestive',    '💧'),
+     ('Urinary urgency', 'urinary',      '🚽'),
+-    ('Painful urination', 'urinary',    '🔥');
++    ('Painful urination', 'urinary',    '🔥'),
++    -- Bowel/rectal lesion-mapping symptoms (added to support broader
++    -- lesion mapping beyond typical uterine symptoms)
++    ('Painful bowel movements', 'bowel',    '😣'),
++    ('Rectal bleeding',         'bowel',    '🩸'),
++    ('Bowel spasms',            'bowel',    '🌀'),
++    ('Blood in stool',          'bowel',    '🔴'),
++    -- Additional bladder-specific symptoms
++    ('Blood in urine',          'urinary',  '🔴'),
++    ('Bladder pressure/fullness', 'urinary', '🎈'),
++    -- Thoracic (lung/diaphragm) lesion-mapping symptoms
++    ('Shoulder tip pain',           'thoracic', '💢'),
++    ('Chest pain (cycle-related)',  'thoracic', '💥'),
++    ('Shortness of breath',         'thoracic', '😮‍💨'),
++    ('Coughing blood',              'thoracic', '🚨');
+ 
+ -- ============================================================
+ -- SYMPTOM ENTRIES
+@@ -141,7 +155,12 @@ INSERT OR IGNORE INTO pain_locations (name, body_region) VALUES
+     ('Head',                'head'),
+     ('Chest',               'chest'),
+     ('Shoulders',           'back'),
+-    ('Neck',                'back');
++    ('Neck',                'back'),
++    -- Added for broader lesion mapping (bowel, bladder, thoracic sites)
++    ('Bowel',               'abdomen'),
++    ('Bladder',             'pelvis'),
++    ('Diaphragm',           'chest'),
++    ('Lungs',               'chest');
+ 
+ -- ============================================================
+ -- PAIN ENTRIES
+diff --git a/src/db/004_add_cycle_tracking_mode.sql b/src/db/004_add_cycle_tracking_mode.sql
+new file mode 100644
+index 0000000..9854358
+--- /dev/null
++++ b/src/db/004_add_cycle_tracking_mode.sql
+@@ -0,0 +1,17 @@
++-- EndoBuddy Migration 004: Add cycle tracking mode
++-- Supports patients without a menstrual cycle to track against (e.g.
++-- post-hysterectomy, menopausal) so the app stops fabricating a fake
++-- period date for them and instead tracks symptoms day-to-day.
++
++-- 'menstrual' (default): cycle day/phase computed from last_period_start
++-- and cycle_length_avg, as before.
++-- 'acyclic': no menstrual cycle. Phase/cycle-day displays are turned off
++-- app-wide unless hormone_cycle_tracking is also set.
++ALTER TABLE users ADD COLUMN cycle_tracking_mode TEXT NOT NULL DEFAULT 'menstrual';
++
++-- Only meaningful when cycle_tracking_mode = 'acyclic'. Lets a patient on
++-- cyclical hormone therapy (e.g. cyclic HRT patches/pills) still track that
++-- pattern. When set, last_period_start/cycle_length_avg are repurposed to
++-- represent the hormone therapy cycle rather than a menstrual one, and the
++-- app labels it as such instead of using menstrual-phase language.
++ALTER TABLE users ADD COLUMN hormone_cycle_tracking INTEGER NOT NULL DEFAULT 0;
+diff --git a/src/db/seed.sql b/src/db/seed.sql
+index cea81dd..1002e5c 100644
+--- a/src/db/seed.sql
++++ b/src/db/seed.sql
+@@ -34,7 +34,20 @@ INSERT OR IGNORE INTO symptoms (name, category, icon) VALUES
+     ('Night sweats',    'general',      '💦'),
+     ('Weight gain',     'general',      '⚖️'),
+     ('Hair thinning',   'general',      '💇'),
+-    ('Appetite changes', 'digestive',   '🍽️');
++    ('Appetite changes', 'digestive',   '🍽️'),
++    -- Bowel/rectal lesion-mapping symptoms
++    ('Painful bowel movements', 'bowel',    '😣'),
++    ('Rectal bleeding',         'bowel',    '🩸'),
++    ('Bowel spasms',            'bowel',    '🌀'),
++    ('Blood in stool',          'bowel',    '🔴'),
++    -- Additional bladder-specific symptoms
++    ('Blood in urine',          'urinary',  '🔴'),
++    ('Bladder pressure/fullness', 'urinary', '🎈'),
++    -- Thoracic (lung/diaphragm) lesion-mapping symptoms
++    ('Shoulder tip pain',           'thoracic', '💢'),
++    ('Chest pain (cycle-related)',  'thoracic', '💥'),
++    ('Shortness of breath',         'thoracic', '😮‍💨'),
++    ('Coughing blood',              'thoracic', '🚨');
+ 
+ -- Pain Locations
+ INSERT OR IGNORE INTO pain_locations (name, body_region) VALUES
+@@ -50,7 +63,12 @@ INSERT OR IGNORE INTO pain_locations (name, body_region) VALUES
+     ('Shoulders',           'back'),
+     ('Neck',                'back'),
+     ('Ovaries',             'pelvis'),
+-    ('Rectum',              'pelvis');
++    ('Rectum',              'pelvis'),
++    -- Added for broader lesion mapping (bowel, bladder, thoracic sites)
++    ('Bowel',               'abdomen'),
++    ('Bladder',              'pelvis'),
++    ('Diaphragm',            'chest'),
++    ('Lungs',                'chest');
+ 
+ -- Medications
+ INSERT OR IGNORE INTO medications (name, type, category) VALUES
+diff --git a/src/services/dbService.js b/src/services/dbService.js
+index b372d45..9a9ef2a 100644
+--- a/src/services/dbService.js
++++ b/src/services/dbService.js
+@@ -275,12 +275,17 @@ export async function getFeedbackStats() {
+ // creating a brand new anonymous one, which used to silently orphan real
+ // logins by switching localStorage over to a fresh empty account.
+ export async function completeOnboarding(onboardingData, existingUserId) {
++  const cycleTrackingMode = onboardingData.cycleTrackingMode === 'acyclic' ? 'acyclic' : 'menstrual'
++  const hormoneCycleTracking = !!onboardingData.hormoneCycleTracking
++
+   if (existingUserId) {
+     await updateUser(existingUserId, {
+       displayName: onboardingData.name || undefined,
+       cycleLength: onboardingData.cycleLength || 28,
+       lastPeriodStart: onboardingData.lastPeriodStart || undefined,
+       onboardingComplete: 1,
++      cycleTrackingMode,
++      hormoneCycleTracking,
+     })
+     return await getUser(existingUserId)
+   }
+@@ -290,6 +295,8 @@ export async function completeOnboarding(onboardingData, existingUserId) {
+     displayName: onboardingData.name || '',
+     cycleLength: onboardingData.cycleLength || 28,
+     lastPeriodStart: onboardingData.lastPeriodStart || null,
++    cycleTrackingMode,
++    hormoneCycleTracking,
+   })
+ 
+   return user
+diff --git a/src/utils/mockData.js b/src/utils/mockData.js
+index 97c24f4..57b9f72 100644
+--- a/src/utils/mockData.js
++++ b/src/utils/mockData.js
+@@ -62,6 +62,30 @@ export const PHASE_STYLES = {
+     dot: 'bg-purple-400',
+     description: 'Progesterone rises — PMS symptoms common. Focus on gentle movement.',
+   },
++  // Neutral day-counter for acyclic users who opted to track a cyclical
++  // hormone therapy pattern (e.g. cyclic HRT). Deliberately avoids
++  // menstrual/follicular/ovulatory/luteal language, since those describe
++  // ovarian biology this pattern doesn't necessarily reflect.
++  hormoneCycle: {
++    label: 'Hormone therapy',
++    color: '#6366F1',
++    bg: 'bg-indigo-50',
++    text: 'text-indigo-700',
++    border: 'border-indigo-200',
++    dot: 'bg-indigo-400',
++    description: "Tracking your hormone therapy pattern — not a menstrual phase.",
++  },
++  // Shown for acyclic users not tracking any cycle at all (e.g. post-
++  // hysterectomy, no hormone therapy pattern to track). No phase implied.
++  off: {
++    label: 'Cycle tracking off',
++    color: '#6B7280',
++    bg: 'bg-gray-50',
++    text: 'text-gray-600',
++    border: 'border-gray-200',
++    dot: 'bg-gray-400',
++    description: "You're logging symptoms day-to-day, with no cycle phase applied.",
++  },
+ }
+ 
+ // Phase order for the cycle map

@@ -62,6 +62,30 @@ export const PHASE_STYLES = {
     dot: 'bg-purple-400',
     description: 'Progesterone rises — PMS symptoms common. Focus on gentle movement.',
   },
+  // Neutral day-counter for acyclic users who opted to track a cyclical
+  // hormone therapy pattern (e.g. cyclic HRT). Deliberately avoids
+  // menstrual/follicular/ovulatory/luteal language, since those describe
+  // ovarian biology this pattern doesn't necessarily reflect.
+  hormoneCycle: {
+    label: 'Hormone therapy',
+    color: '#6366F1',
+    bg: 'bg-indigo-50',
+    text: 'text-indigo-700',
+    border: 'border-indigo-200',
+    dot: 'bg-indigo-400',
+    description: "Tracking your hormone therapy pattern — not a menstrual phase.",
+  },
+  // Shown for acyclic users not tracking any cycle at all (e.g. post-
+  // hysterectomy, no hormone therapy pattern to track). No phase implied.
+  off: {
+    label: 'Cycle tracking off',
+    color: '#6B7280',
+    bg: 'bg-gray-50',
+    text: 'text-gray-600',
+    border: 'border-gray-200',
+    dot: 'bg-gray-400',
+    description: "You're logging symptoms day-to-day, with no cycle phase applied.",
+  },
 }
 
 // Phase order for the cycle map

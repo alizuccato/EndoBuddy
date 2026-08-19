@@ -45,24 +45,33 @@ const PHASE_CONTENT = {
   },
 }
 
+// Phases with dedicated meal/movement/rest content in PHASE_CONTENT and
+// phase-wellness-library.json — content that assumes an ovarian cycle.
+// Acyclic states ('hormoneCycle', 'off') deliberately have no entry here,
+// since that content wouldn't be accurate for them.
+const PHASES_WITH_WELLNESS_CONTENT = ['menstrual', 'follicular', 'ovulatory', 'luteal']
+
 export default function PhaseAwareHome({ onStartLogging, todayLogged, recentLogs, cycleData, isPremium, onUpgrade }) {
   const data = cycleData || {}
-  const phase = data.currentPhase || 'luteal'
+  const hasCycle = data.hasCycle !== false
+  const phase = data.currentPhase || (hasCycle ? 'luteal' : 'off')
+  const hasPhaseWellnessContent = PHASES_WITH_WELLNESS_CONTENT.includes(phase)
   const dayNum = data.currentDayNum || 1
   const cycleLen = data.cycleLength || 28
   const content = PHASE_CONTENT[phase] || PHASE_CONTENT.luteal
-  const style = PHASE_STYLES[phase] || PHASE_STYLES.luteal
+  const style = PHASE_STYLES[phase] || PHASE_STYLES.off
   
   const [endoFactDismissed, setEndoFactDismissed] = useState(false)
   const [currentFactIndex, setCurrentFactIndex] = useState(0)
 
   // Get wellness data from the library
   const phaseWellness = useMemo(() => {
+    if (!hasPhaseWellnessContent) return null
     try {
       const phases = wellnessData?.phases || {}
       return phases[phase] || null
     } catch { return null }
-  }, [phase])
+  }, [phase, hasPhaseWellnessContent])
 
   const meals = phaseWellness?.meals || []
   const tips = phaseWellness?.lifestyle_tips || []
@@ -71,13 +80,76 @@ export default function PhaseAwareHome({ onStartLogging, todayLogged, recentLogs
   const currentFact = endoFacts[currentFactIndex % Math.max(endoFacts.length, 1)]
 
   const loggedDays = recentLogs?.length || 0
-  const progress = Math.min(100, Math.round((loggedDays / cycleLen) * 100))
+  const progress = hasPhaseWellnessContent ? Math.min(100, Math.round((loggedDays / cycleLen) * 100)) : Math.min(100, loggedDays * 10)
   const ringCircumference = 2 * Math.PI * 54
   const ringOffset = ringCircumference - (progress / 100) * ringCircumference
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric'
   })
+
+  // Acyclic users (no menstrual cycle, no hormone-cycle tracking): a
+  // simplified home screen without phase-based wellness content, which
+  // wouldn't be accurate for them. Still supports logging and progress.
+  if (!hasPhaseWellnessContent) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-indigo-50/20 transition-all duration-500">
+        <div className="max-w-lg mx-auto px-5 py-6 pb-28">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2">
+              <div className={`w-2.5 h-2.5 rounded-full ${style.dot}`} />
+              <span className={`text-xs font-semibold ${style.text}`}>
+                {style.label}{phase === 'hormoneCycle' ? ` · Day ${dayNum}` : ''}
+              </span>
+            </div>
+            <span className="text-[11px] text-gray-400">{today}</span>
+          </div>
+
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex-1">
+              <h1 className="text-xl font-bold text-gray-900 leading-tight">
+                {phase === 'hormoneCycle' ? "Tracking your hormone therapy pattern." : "Log how you're feeling today."}
+              </h1>
+              <p className="text-xs text-gray-500 mt-1">{style.description}</p>
+            </div>
+            {!isPremium && (
+              <button onClick={onUpgrade} className="flex-shrink-0 bg-gradient-to-r from-endo-purple to-endo-pink text-white text-[10px] font-bold px-2.5 py-1.5 rounded-full shadow-sm ml-2 hover:opacity-90">
+                ⭐ Premium
+              </button>
+            )}
+          </div>
+
+          <div className="flex justify-center mb-6 mt-4">
+            <div className="relative">
+              <svg width="130" height="130" className="transform -rotate-90">
+                <circle cx="65" cy="65" r="50" fill="none" stroke="#E5E7EB" strokeWidth="5" />
+                <circle cx="65" cy="65" r="50" fill="none"
+                  stroke={style.color} strokeWidth="5" strokeLinecap="round"
+                  strokeDasharray={ringCircumference} strokeDashoffset={ringOffset}
+                  className="transition-all duration-700 ease-out" />
+              </svg>
+              <button onClick={onStartLogging}
+                className="absolute inset-0 m-auto w-20 h-20 rounded-full bg-white shadow-lg hover:shadow-xl flex flex-col items-center justify-center transition-all hover:scale-105 active:scale-95 border-2 border-gray-100">
+                <span className="text-xl mb-0.5">{todayLogged ? '✅' : '+'}</span>
+                <span className="text-[9px] font-semibold text-gray-600">{todayLogged ? 'Logged' : 'Log Now'}</span>
+              </button>
+              <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[9px] font-medium text-gray-400 whitespace-nowrap">
+                {loggedDays} day{loggedDays === 1 ? '' : 's'} logged
+              </span>
+            </div>
+          </div>
+
+          <p className="text-xs text-center text-gray-400 mb-5 -mt-2">
+            {todayLogged ? "✅ Today logged." : loggedDays > 0 ? `Log today to keep your streak going.` : "Log your first day to start spotting patterns."}
+          </p>
+
+          {!todayLogged && recentLogs.length === 0 && (
+            <div className="mt-4"><EmpathyMessage isFirstLog={true} painLevel={0} /></div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={`min-h-screen ${content.theme.bg} transition-all duration-500`}>

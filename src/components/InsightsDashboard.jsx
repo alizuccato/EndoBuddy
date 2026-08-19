@@ -20,12 +20,20 @@ import { PHASE_STYLES } from '../utils/mockData'
 export default function InsightsDashboard({ cycleData, insights, onInsightAction }) {
   const data = cycleData || {}
   const hasInsights = insights && insights.length > 0
+  const hasCycle = data.hasCycle !== false
+  // CycleMap draws menstrual/follicular/ovulatory/luteal phase wedges,
+  // which only make sense for an actual menstrual cycle — not a hormone
+  // therapy pattern (no ovulation involved) and not acyclic tracking.
+  const hasPhaseSegments = data.cycleTrackingMode !== 'acyclic'
   
-  const currentPhaseStyle = PHASE_STYLES[data.currentPhase] || PHASE_STYLES.menstrual
+  const currentPhaseStyle = PHASE_STYLES[data.currentPhase] || PHASE_STYLES.off
+  const showsPhaseLabel = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(data.currentPhase)
   
-  // Calculate next period prediction
+  // Calculate next period prediction — only meaningful for users with an
+  // actual menstrual cycle being tracked.
   const prediction = useMemo(() => {
-    const startDate = new Date(data.cycleStartDate || Date.now())
+    if (!hasCycle || !data.cycleStartDate) return null
+    const startDate = new Date(data.cycleStartDate)
     const cycleLen = data.cycleLength || 28
     const nextPeriod = new Date(startDate.getTime() + cycleLen * 86400000)
     const daysUntil = Math.ceil((nextPeriod.getTime() - Date.now()) / 86400000)
@@ -35,7 +43,7 @@ export default function InsightsDashboard({ cycleData, insights, onInsightAction
       daysUntil: daysUntil > 0 ? daysUntil : 0,
       isImminent: daysUntil <= 3 && daysUntil >= 0,
     }
-  }, [data.cycleStartDate, data.cycleLength])
+  }, [hasCycle, data.cycleStartDate, data.cycleLength])
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 pb-24 md:pb-8 space-y-6">
@@ -57,44 +65,56 @@ export default function InsightsDashboard({ cycleData, insights, onInsightAction
             </span>
           </div>
           
-          {/* Period prediction */}
-          <div className={`px-3 py-2 rounded-xl border ${prediction.isImminent ? 'bg-rose-50 border-rose-200' : 'bg-gray-50 border-gray-200'}`}>
-            <div className="flex items-center gap-2">
-              <span className="text-sm">📅</span>
-              <div>
-                <p className={`text-xs font-semibold ${prediction.isImminent ? 'text-rose-600' : 'text-gray-700'}`}>
-                  {prediction.isImminent ? 'Expected soon' : `In ${prediction.daysUntil} days`}
-                </p>
-                <p className="text-[10px] text-gray-500">Next period: {prediction.nextPeriodDate}</p>
+          {/* Period prediction — only shown when the user has a cycle to predict */}
+          {prediction && (
+            <div className={`px-3 py-2 rounded-xl border ${prediction.isImminent ? 'bg-rose-50 border-rose-200' : 'bg-gray-50 border-gray-200'}`}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm">📅</span>
+                <div>
+                  <p className={`text-xs font-semibold ${prediction.isImminent ? 'text-rose-600' : 'text-gray-700'}`}>
+                    {prediction.isImminent ? 'Expected soon' : `In ${prediction.daysUntil} days`}
+                  </p>
+                  <p className="text-[10px] text-gray-500">Next period: {prediction.nextPeriodDate}</p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
       {/* Phase context message */}
       <div className={`${currentPhaseStyle.bg} rounded-xl px-4 py-3 border ${currentPhaseStyle.border}`}>
         <p className={`text-sm ${currentPhaseStyle.text}`}>
-          <span className="font-semibold">{currentPhaseStyle.label} Phase: </span>
+          <span className="font-semibold">{currentPhaseStyle.label}{showsPhaseLabel ? ' Phase' : ''}: </span>
           {currentPhaseStyle.description}
           {data.currentDayNum && (
             <span className="block text-xs mt-0.5 opacity-75">
-              You are on Day {data.currentDayNum} of your cycle
+              You are on Day {data.currentDayNum} of your {data.currentPhase === 'hormoneCycle' ? 'hormone' : ''} cycle
             </span>
           )}
         </p>
       </div>
 
-      {/* Primary Visual: Cycle Map */}
-      <section>
-        <div className="flex items-center gap-2 mb-3">
-          <h3 className="font-semibold text-gray-900 text-sm">Cycle Map</h3>
-          <span className="text-[10px] text-gray-400">Tap phases & days for details</span>
-        </div>
-        <div className="flex justify-center">
-          <CycleMap cycleData={data} />
-        </div>
-      </section>
+      {/* Primary Visual: Cycle Map — only meaningful when there's an actual
+          menstrual or hormone-therapy cycle to segment into phases */}
+      {hasPhaseSegments ? (
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <h3 className="font-semibold text-gray-900 text-sm">Cycle Map</h3>
+            <span className="text-[10px] text-gray-400">Tap phases & days for details</span>
+          </div>
+          <div className="flex justify-center">
+            <CycleMap cycleData={data} />
+          </div>
+        </section>
+      ) : (
+        <section className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-5 text-center">
+          <p className="text-sm text-gray-600">
+            {hasCycle ? "Your hormone cycle doesn't map to phase segments, so there's no cycle map to show." : "Cycle tracking is off, so there's no cycle map to show."}
+          </p>
+          <p className="text-xs text-gray-400 mt-1">Your symptom and pain trends below still track day-to-day.</p>
+        </section>
+      )}
 
       {/* Secondary: AI Insight Cards */}
       <section>

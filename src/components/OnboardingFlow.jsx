@@ -36,6 +36,15 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
     agreedToPrivacy: false,
     agreedToTos: false,
     ageVerified: false,
+    // 'menstrual' (default) or 'acyclic' — for patients without a
+    // menstrual cycle to track against (e.g. post-hysterectomy,
+    // menopausal). See Step 2/3 below.
+    cycleTrackingMode: 'menstrual',
+    // Only relevant when cycleTrackingMode is 'acyclic'. True if the
+    // person wants to track a cyclical hormone therapy pattern (e.g.
+    // cyclic HRT) using the same lastPeriodStart/cycleLength fields,
+    // just relabeled.
+    hormoneCycleTracking: false,
   })
   const [showCalendar, setShowCalendar] = useState(false)
 
@@ -73,8 +82,15 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
     if (onComplete) onComplete(onboardingData)
   }, [onboardingData, onComplete])
 
-  // Calculate current phase based on entered data
+  // Calculate current phase based on entered data. Acyclic users don't get
+  // a fabricated menstrual phase — either a neutral hormone-cycle day
+  // count (if they opted into hormone therapy tracking) or no phase at
+  // all (cycle tracking off).
   const estimatedPhase = useMemo(() => {
+    if (onboardingData.cycleTrackingMode === 'acyclic') {
+      if (onboardingData.hormoneCycleTracking && onboardingData.lastPeriodStart) return 'hormoneCycle'
+      return 'off'
+    }
     if (!onboardingData.lastPeriodStart) return 'follicular'
     const cycleDay = getDayOfCycle(onboardingData.lastPeriodStart, onboardingData.cycleLength || 28)
     if (cycleDay == null) return 'follicular'
@@ -83,7 +99,7 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
     if (cycleDay <= 14) return 'follicular'
     if (cycleDay === 15) return 'ovulatory'
     return 'luteal'
-  }, [onboardingData.lastPeriodStart, onboardingData.cycleLength])
+  }, [onboardingData.cycleTrackingMode, onboardingData.hormoneCycleTracking, onboardingData.lastPeriodStart, onboardingData.cycleLength])
 
   const phaseStyle = PHASE_STYLES[estimatedPhase] || PHASE_STYLES.follicular
 
@@ -214,82 +230,212 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
               Next
             </button>
           </div>
-          <div className="text-center">
+          <div className="text-center space-y-2">
             <button
               onClick={() => {
                 const defaultDate = getLocalDateString(new Date(Date.now() - 14 * 86400000))
                 handleSelect('lastPeriodStart', defaultDate)
                 handleNext()
               }}
-              className="text-sm text-gray-400 hover:text-gray-600"
+              className="block w-full text-sm text-gray-400 hover:text-gray-600"
             >
-              I'm not sure / I don't have regular periods
+              I'm not sure / my periods are irregular
+            </button>
+            <button
+              onClick={() => {
+                handleSelect('cycleTrackingMode', 'acyclic')
+                handleSelect('lastPeriodStart', null)
+                handleSelect('hormoneCycleTracking', false)
+                handleNext()
+              }}
+              className="block w-full text-sm text-gray-400 hover:text-gray-600"
+            >
+              I don't have periods (hysterectomy, menopause, etc.)
             </button>
           </div>
         </div>
       ),
     },
-    // Step 3: Cycle Rhythm
+    // Step 3: Cycle Rhythm (menstrual mode) or Hormone Therapy check (acyclic mode)
     {
-      render: () => (
-        <div className="space-y-6 max-w-sm mx-auto">
-          <div className="text-center">
-            <div className="text-4xl mb-3">🔄</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              How many days does your cycle usually last?
-            </h2>
-            <p className="text-sm text-gray-500">
-              Most cycles are between 25 and 35 days. If yours varies, we'll learn your rhythm over time.
-            </p>
-          </div>
-
-          {/* Cycle length selector */}
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-4">
-              <button
-                onClick={() => handleSelect('cycleLength', Math.max(21, (onboardingData.cycleLength || 28) - 1))}
-                className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
-              >
-                −
-              </button>
-              <div className="text-center min-w-[100px]">
-                <span className="text-5xl font-bold text-endo-purple">{onboardingData.cycleLength || 28}</span>
-                <p className="text-sm text-gray-500 mt-1">days</p>
+      render: () => {
+        if (onboardingData.cycleTrackingMode === 'acyclic') {
+          return (
+            <div className="space-y-6 max-w-sm mx-auto">
+              <div className="text-center">
+                <div className="text-4xl mb-3">💊</div>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                  Are you on hormone therapy?
+                </h2>
+                <p className="text-sm text-gray-500">
+                  If you follow a cyclical pattern — like cyclic HRT patches, pills, or rings taken on a repeating
+                  schedule — we can track that pattern instead of a menstrual cycle. Otherwise, you can just log
+                  symptoms day-to-day, no cycle context needed.
+                </p>
               </div>
-              <button
-                onClick={() => handleSelect('cycleLength', Math.min(45, (onboardingData.cycleLength || 28) + 1))}
-                className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
-              >
-                +
+
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => handleSelect('hormoneCycleTracking', true)}
+                  className={`px-6 py-3 rounded-xl text-sm font-medium border-2 transition-colors
+                    ${onboardingData.hormoneCycleTracking
+                      ? 'bg-endo-purple text-white border-endo-purple'
+                      : 'bg-gray-50 text-gray-700 border-gray-100 hover:border-endo-purple/30'}
+                  `}
+                >
+                  Yes, track my hormone therapy pattern
+                </button>
+                <button
+                  onClick={() => { handleSelect('hormoneCycleTracking', false); handleSelect('lastPeriodStart', null) }}
+                  className={`px-6 py-3 rounded-xl text-sm font-medium border-2 transition-colors
+                    ${!onboardingData.hormoneCycleTracking
+                      ? 'bg-endo-purple text-white border-endo-purple'
+                      : 'bg-gray-50 text-gray-700 border-gray-100 hover:border-endo-purple/30'}
+                  `}
+                >
+                  No, just log day-to-day
+                </button>
+              </div>
+
+              {/* Sub-form: only shown once "Yes" is selected */}
+              {onboardingData.hormoneCycleTracking && (
+                <div className="space-y-4 pt-2 border-t border-gray-100">
+                  <div>
+                    <p className="text-sm text-gray-600 mb-2 text-center">
+                      When did your current hormone cycle most recently start?
+                    </p>
+                    <button
+                      onClick={() => setShowCalendar(!showCalendar)}
+                      className="w-full input-field text-center text-base py-3"
+                    >
+                      {onboardingData.lastPeriodStart
+                        ? new Date(onboardingData.lastPeriodStart + 'T00:00:00').toLocaleDateString('en-US', {
+                            month: 'long', day: 'numeric', year: 'numeric'
+                          })
+                        : 'Tap to select a date'}
+                    </button>
+                    {showCalendar && (
+                      <div className="card max-h-40 overflow-y-auto mt-2">
+                        {dayOptions.map(option => (
+                          <button
+                            key={option.value}
+                            onClick={() => {
+                              handleSelect('lastPeriodStart', option.value)
+                              setShowCalendar(false)
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors
+                              ${onboardingData.lastPeriodStart === option.value
+                                ? 'bg-endo-purple/10 text-endo-purple font-medium'
+                                : 'hover:bg-gray-50 text-gray-700'}
+                            `}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-center">
+                    <p className="text-sm text-gray-600 mb-2">How many days is your hormone cycle?</p>
+                    <div className="flex items-center justify-center gap-4">
+                      <button
+                        onClick={() => handleSelect('cycleLength', Math.max(14, (onboardingData.cycleLength || 28) - 1))}
+                        className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-lg font-bold text-gray-600"
+                      >
+                        −
+                      </button>
+                      <div className="text-center min-w-[80px]">
+                        <span className="text-3xl font-bold text-endo-purple">{onboardingData.cycleLength || 28}</span>
+                        <p className="text-xs text-gray-500">days</p>
+                      </div>
+                      <button
+                        onClick={() => handleSelect('cycleLength', Math.min(90, (onboardingData.cycleLength || 28) + 1))}
+                        className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-lg font-bold text-gray-600"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-center gap-3 mt-4">
+                <button onClick={handleBack} className="px-6 py-2.5 text-sm text-gray-500 font-medium">
+                  Back
+                </button>
+                <button
+                  onClick={handleNext}
+                  disabled={onboardingData.hormoneCycleTracking && !onboardingData.lastPeriodStart}
+                  className={`btn-primary px-8 py-2.5 ${onboardingData.hormoneCycleTracking && !onboardingData.lastPeriodStart ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )
+        }
+
+        return (
+          <div className="space-y-6 max-w-sm mx-auto">
+            <div className="text-center">
+              <div className="text-4xl mb-3">🔄</div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                How many days does your cycle usually last?
+              </h2>
+              <p className="text-sm text-gray-500">
+                Most cycles are between 25 and 35 days. If yours varies, we'll learn your rhythm over time.
+              </p>
+            </div>
+
+            {/* Cycle length selector */}
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-4">
+                <button
+                  onClick={() => handleSelect('cycleLength', Math.max(21, (onboardingData.cycleLength || 28) - 1))}
+                  className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
+                >
+                  −
+                </button>
+                <div className="text-center min-w-[100px]">
+                  <span className="text-5xl font-bold text-endo-purple">{onboardingData.cycleLength || 28}</span>
+                  <p className="text-sm text-gray-500 mt-1">days</p>
+                </div>
+                <button
+                  onClick={() => handleSelect('cycleLength', Math.min(45, (onboardingData.cycleLength || 28) + 1))}
+                  className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600"
+                >
+                  +
+                </button>
+              </div>
+              {/* Slider track */}
+              <div className="mt-4 px-4">
+                <input
+                  type="range"
+                  min="21"
+                  max="45"
+                  value={onboardingData.cycleLength || 28}
+                  onChange={(e) => handleSelect('cycleLength', parseInt(e.target.value))}
+                  className="w-full accent-endo-purple"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>21 days</span>
+                  <span>45+ days</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-center gap-3 mt-4">
+              <button onClick={handleBack} className="px-6 py-2.5 text-sm text-gray-500 font-medium">
+                Back
+              </button>
+              <button onClick={handleNext} className="btn-primary px-8 py-2.5">
+                Next
               </button>
             </div>
-            {/* Slider track */}
-            <div className="mt-4 px-4">
-              <input
-                type="range"
-                min="21"
-                max="45"
-                value={onboardingData.cycleLength || 28}
-                onChange={(e) => handleSelect('cycleLength', parseInt(e.target.value))}
-                className="w-full accent-endo-purple"
-              />
-              <div className="flex justify-between text-xs text-gray-400 mt-1">
-                <span>21 days</span>
-                <span>45+ days</span>
-              </div>
-            </div>
           </div>
-
-          <div className="flex justify-center gap-3 mt-4">
-            <button onClick={handleBack} className="px-6 py-2.5 text-sm text-gray-500 font-medium">
-              Back
-            </button>
-            <button onClick={handleNext} className="btn-primary px-8 py-2.5">
-              Next
-            </button>
-          </div>
-        </div>
-      ),
+        )
+      },
     },
     // Step 4: Symptom Baseline
     {
@@ -459,18 +605,23 @@ export default function OnboardingFlow({ onComplete, onSkip, onStartLogging, onG
               You're all set!
             </h2>
 
-            {/* Phase context */}
+            {/* Phase context (menstrual and hormone-cycle modes) or a
+                neutral "tracking off" card (acyclic, no hormone tracking) */}
             <div className={`rounded-2xl p-4 ${phaseStyle.bg} border ${phaseStyle.border}`}>
               <div className="flex items-center justify-center gap-2 mb-2">
                 <div className={`w-3 h-3 rounded-full ${phaseStyle.dot}`} />
-                <span className={`font-semibold ${phaseStyle.text}`}>{phaseStyle.label} Phase</span>
+                <span className={`font-semibold ${phaseStyle.text}`}>
+                  {estimatedPhase === 'off' || estimatedPhase === 'hormoneCycle' ? phaseStyle.label : `${phaseStyle.label} Phase`}
+                </span>
               </div>
               <p className={`text-sm ${phaseStyle.text} opacity-80`}>
                 {phaseStyle.description}
               </p>
               {totalSymptoms > 0 && (
                 <p className="text-xs mt-2 opacity-60">
-                  Tracking {totalSymptoms} symptom{totalSymptoms > 1 ? 's' : ''} · {onboardingData.cycleLength}-day cycles
+                  {estimatedPhase === 'off' && `Tracking ${totalSymptoms} symptom${totalSymptoms > 1 ? 's' : ''}`}
+                  {estimatedPhase === 'hormoneCycle' && `Tracking ${totalSymptoms} symptom${totalSymptoms > 1 ? 's' : ''} · ${onboardingData.cycleLength}-day hormone cycle`}
+                  {estimatedPhase !== 'off' && estimatedPhase !== 'hormoneCycle' && `Tracking ${totalSymptoms} symptom${totalSymptoms > 1 ? 's' : ''} · ${onboardingData.cycleLength}-day cycles`}
                 </p>
               )}
             </div>
