@@ -17,7 +17,7 @@ import PremiumUpgradeFlow from './components/PremiumUpgradeFlow'
 import LoginFlow from './components/LoginFlow'
 import ProfileTab from './components/ProfileTab'
 import { getUserId, getUser, getLogs, saveDailyLog, completeOnboarding, getPatterns, logoutUser, deleteLog, updateLog } from './services/dbService'
-import { getLocalDateString, getDayOfCycle } from './utils/dateHelpers'
+import { getLocalDateString, getDayOfCycle, getCyclePhaseForDay } from './utils/dateHelpers'
 
 function App() {
   const [currentView, setCurrentView] = useState('home')
@@ -246,25 +246,13 @@ function App() {
       try {
         currentDayNum = getDayOfCycle(lastPeriodStart, cycleLength)
         if (currentDayNum != null) {
-          if (isAcyclic && hormoneCycleTracking) {
-            // Hormone therapy pattern, not ovarian biology — a neutral day
-            // count/label rather than menstrual-phase language.
-            currentPhase = 'hormoneCycle'
-          } else {
-            // Ovulation happens ~14 days before the *next* period, not on a
-            // fixed day 15 — the luteal phase (post-ovulation) is the part of
-            // the cycle that stays roughly constant at ~14 days, while the
-            // follicular phase (pre-ovulation) is what stretches or shrinks
-            // when a cycle runs longer or shorter than 28 days. Anchoring off
-            // cycleLength instead of a hardcoded day keeps this in sync with
-            // apps like most standard cycle trackers (e.g. My Cycle), which
-            // predict ovulation the same way.
-            const ovulationDay = Math.max(1, cycleLength - 14)
-            if (currentDayNum <= 5) currentPhase = 'menstrual'
-            else if (currentDayNum < ovulationDay) currentPhase = 'follicular'
-            else if (currentDayNum === ovulationDay) currentPhase = 'ovulatory'
-            else currentPhase = 'luteal'
-          }
+          // Shared with server.js (see src/utils/dateHelpers.js) so "today's"
+          // phase shown here always agrees with the phase computed and saved
+          // for each daily log — ovulation is anchored ~14 days before the
+          // *next* period (via cycleLength) rather than a hardcoded day 15,
+          // which keeps this in sync with apps like most standard cycle
+          // trackers (e.g. My Cycle), which predict ovulation the same way.
+          currentPhase = getCyclePhaseForDay(currentDayNum, cycleLength, { isAcyclic, hormoneCycleTracking })
         }
       } catch (e) {
         console.error('Error computing cycle day:', e)

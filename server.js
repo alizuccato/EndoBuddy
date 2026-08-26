@@ -11,6 +11,7 @@ import { createClient } from '@libsql/client'
 import { randomUUID, scryptSync, timingSafeEqual, createHmac } from 'crypto'
 import { readFileSync, existsSync } from 'fs'
 import { join, extname } from 'path'
+import { computeCyclePhaseForLog } from './src/utils/dateHelpers.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -220,6 +221,41 @@ try {
   console.error('Failed to create doctor_reports table:', e.message)
 }
 
+// One-time backfill for existing daily_logs rows saved before cycle_day/
+// cycle_phase were ever computed (see POST/PUT /api/logs below — no code
+// path actually populated these columns until now, so every previously
+// saved log has cycle_phase = NULL, which is why it showed as "Unknown"
+// in reports and why phase-dependent premium features — deep report phase
+// breakdown, pain forecast, correlation patterns — all filter on
+// `cycle_phase IS NOT NULL` and so never had any data to work with,
+// however many days a user had logged). Only touches rows still missing a
+// phase, so this is a no-op on every startup after the first.
+try {
+  const nullPhaseLogs = await teamDb(
+    `SELECT id, user_id, log_date FROM daily_logs WHERE cycle_phase IS NULL OR cycle_day IS NULL`
+  )
+  if (nullPhaseLogs.length > 0) {
+    const profileCache = new Map()
+    let backfilled = 0
+    for (const row of nullPhaseLogs) {
+      let profile = profileCache.get(row.user_id)
+      if (profile === undefined) {
+        profile = await getUserCycleProfile(row.user_id)
+        profileCache.set(row.user_id, profile)
+      }
+      if (!profile) continue
+      const { cycleDay, cyclePhase } = computeCyclePhaseForLog({ ...profile, logDate: row.log_date })
+      const safePhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(cyclePhase) ? cyclePhase : null
+      if (cycleDay == null && safePhase == null) continue
+      await teamDb(`UPDATE daily_logs SET cycle_day = ?, cycle_phase = ? WHERE id = ?`, [cycleDay, safePhase, row.id])
+      backfilled++
+    }
+    if (backfilled > 0) console.log(`Backfilled cycle_day/cycle_phase for ${backfilled} existing log(s).`)
+  }
+} catch (e) {
+  console.error('Failed to backfill cycle_day/cycle_phase on existing logs:', e.message)
+}
+
 // Password hashing with scrypt (salt + hash)
 function hashPassword(password) {
   const salt = randomUUID().slice(0, 16)
@@ -354,6 +390,25 @@ async function getAuthenticatedUserId(req) {
     return session.user_id
   } catch (e) {
     return null
+  }
+}
+
+// Fetches the subset of a user's profile needed to compute cycle_day/
+// cycle_phase for a log entry. Used by the log create/update routes below
+// (and by the startup backfill) so that computation lives in one place
+// rather than being re-derived per-route.
+async function getUserCycleProfile(userId) {
+  const rows = await teamDb(
+    `SELECT cycle_length_avg, last_period_start, cycle_tracking_mode, hormone_cycle_tracking FROM users WHERE id = ?`,
+    [userId]
+  )
+  if (rows.length === 0) return null
+  const u = rows[0]
+  return {
+    cycleLength: u.cycle_length_avg || 28,
+    lastPeriodStart: u.last_period_start || null,
+    cycleTrackingMode: u.cycle_tracking_mode || 'menstrual',
+    hormoneCycleTracking: !!u.hormone_cycle_tracking,
   }
 }
 
@@ -808,9 +863,22 @@ const router = {
     const id = randomUUID()
     const now = new Date().toISOString()
     
-    // Validate optional inputs
-    const cycleDay = isValidNumber(body.cycleDay) ? Number(body.cycleDay) : null
-    const cyclePhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? body.cyclePhase : null
+    // cycle_day/cycle_phase are derived data — computed here from the
+    // user's own cycle profile (last_period_start, cycle_length_avg, etc.)
+    // rather than trusted from the request body. The client never actually
+    // sent these fields (there was no code path that computed them for a
+    // log being saved, only for "today" on the home screen), so every log
+    // was silently persisted with both columns NULL, which is why cycle
+    // phase showed "Unknown" everywhere it was displayed, and why every
+    // phase-dependent premium feature (deep report phase breakdown, pain
+    // forecast, correlation patterns) treated every user as having zero
+    // usable data regardless of how many days they'd logged.
+    const cycleProfile = await getUserCycleProfile(body.userId)
+    const computed = cycleProfile
+      ? computeCyclePhaseForLog({ ...cycleProfile, logDate: body.logDate })
+      : { cycleDay: null, cyclePhase: null }
+    const cycleDay = computed.cycleDay
+    const cyclePhase = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(computed.cyclePhase) ? computed.cyclePhase : null
     const isPeriodDay = body.isPeriodDay ? 1 : 0
     const flowLevel = ['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? body.flowLevel : null
     const painLevel = (isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null
@@ -883,7 +951,7 @@ const router = {
   'PUT /api/logs/:id': async (req, res, params) => {
     if (!isValidUUID(params.id)) return json(res, { error: 'Invalid log ID format' }, 400)
     
-    const logRows = await teamDb(`SELECT user_id FROM daily_logs WHERE id = ?`, [params.id])
+    const logRows = await teamDb(`SELECT user_id, log_date FROM daily_logs WHERE id = ?`, [params.id])
     if (logRows.length === 0) return json(res, { error: 'Log entry not found' }, 404)
     if (!(await verifyUserAuth(req, res, logRows[0].user_id))) return
     
@@ -892,8 +960,17 @@ const router = {
     
     const updates = []
     const args = []
-    if (body.cycleDay !== undefined) { updates.push(`cycle_day = ?`); args.push(isValidNumber(body.cycleDay) ? Number(body.cycleDay) : null) }
-    if (body.cyclePhase !== undefined) { updates.push(`cycle_phase = ?`); args.push(['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(body.cyclePhase) ? body.cyclePhase : null) }
+    // cycle_day/cycle_phase are always recomputed from the user's current
+    // cycle profile and this log's own date, the same way POST /api/logs
+    // does — never trusted from the request body — so an edited log stays
+    // consistent even if the user's period start/cycle length has since
+    // changed.
+    const cycleProfile = await getUserCycleProfile(logRows[0].user_id)
+    const computed = cycleProfile
+      ? computeCyclePhaseForLog({ ...cycleProfile, logDate: logRows[0].log_date })
+      : { cycleDay: null, cyclePhase: null }
+    updates.push(`cycle_day = ?`); args.push(computed.cycleDay)
+    updates.push(`cycle_phase = ?`); args.push(['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(computed.cyclePhase) ? computed.cyclePhase : null)
     if (body.isPeriodDay !== undefined) { updates.push(`is_period_day = ?`); args.push(body.isPeriodDay ? 1 : 0) }
     if (body.flowLevel !== undefined) { updates.push(`flow_level = ?`); args.push(['heavy', 'medium', 'light', 'spotting'].includes(body.flowLevel) ? body.flowLevel : null) }
     if (body.painLevel !== undefined) { updates.push(`pain_level = ?`); args.push((isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null) }
@@ -1543,17 +1620,37 @@ const router = {
   },
 
   // A patient unlinks their own account from whichever clinician they're
-  // currently connected to. Deliberately doesn't touch the historical
-  // clinic_invitations row (status stays 'accepted') — that's an audit
-  // trail of the invite, not a live connection flag; users.clinician_id
-  // is the actual source of truth for "who can currently see this data."
+  // currently connected to. This acts as a revocation of consent to share
+  // data: it clears users.clinician_id (the actual source of truth for
+  // "who can currently see this data" — the roster query below only
+  // returns rows matching this column, so the patient disappears from the
+  // clinic's view immediately) AND flips their clinic_invitations row(s)
+  // from 'accepted' to 'revoked', so the Invitations tab stops implying
+  // an active link that no longer exists. The schema (003_add_clinic_
+  // linking.sql) always documented 'revoked' as a valid status; this was
+  // the missing piece that actually set it.
   'POST /api/clinic/disconnect': async (req, res) => {
     const body = await parseBody(req)
     if (!isValidUUID(body.patientId)) return json(res, { error: 'Invalid or missing patient ID' }, 400)
     if (!(await verifyUserAuth(req, res, body.patientId))) return
 
     const now = new Date().toISOString()
+    // Read the current clinician before clearing it, so we know which
+    // invitation(s) to mark revoked (a patient could have accepted, then
+    // reconnected to a different clinician, then disconnected — only the
+    // most recent link's invitation(s) should flip).
+    const userRows = await teamDb(`SELECT clinician_id FROM users WHERE id = ?`, [body.patientId])
+    const priorClinicianId = userRows[0]?.clinician_id || null
+
     await teamDb(`UPDATE users SET clinician_id = NULL, updated_at = ? WHERE id = ?`, [now, body.patientId])
+
+    if (priorClinicianId) {
+      await teamDb(
+        `UPDATE clinic_invitations SET status = 'revoked' WHERE clinician_id = ? AND patient_id = ? AND status = 'accepted'`,
+        [priorClinicianId, body.patientId]
+      )
+    }
+
     json(res, { success: true })
   },
 

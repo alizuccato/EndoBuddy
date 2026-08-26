@@ -20,6 +20,8 @@ const SYMPTOMS_BY_CATEGORY = {
       { id: 14, name: 'Joint pain', icon: '🦴' },
       { id: 15, name: 'Muscle aches', icon: '💪' },
       { id: 5, name: 'Headache', icon: '🤕' },
+      { id: 36, name: 'Hip pain', icon: '🦴' },
+      { id: 37, name: 'Leg pain / sciatica', icon: '🦵' },
     ]
   },
   digestive: {

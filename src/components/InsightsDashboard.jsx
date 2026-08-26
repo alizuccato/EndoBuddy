@@ -11,11 +11,11 @@
  * Includes phase-specific wellness prompts and context.
  */
 
-import { useState, useMemo } from 'react'
 import CycleMap from './CycleMap'
 import SymptomHeatmap from './SymptomHeatmap'
 import { InsightCardList } from './InsightCard'
 import { PHASE_STYLES } from '../utils/mockData'
+import { getNextPeriodPrediction } from '../utils/dateHelpers'
 
 export default function InsightsDashboard({ cycleData, insights, onInsightAction }) {
   const data = cycleData || {}
@@ -30,20 +30,16 @@ export default function InsightsDashboard({ cycleData, insights, onInsightAction
   const showsPhaseLabel = ['menstrual', 'follicular', 'ovulatory', 'luteal'].includes(data.currentPhase)
   
   // Calculate next period prediction — only meaningful for users with an
-  // actual menstrual cycle being tracked.
-  const prediction = useMemo(() => {
-    if (!hasCycle || !data.cycleStartDate) return null
-    const startDate = new Date(data.cycleStartDate)
-    const cycleLen = data.cycleLength || 28
-    const nextPeriod = new Date(startDate.getTime() + cycleLen * 86400000)
-    const daysUntil = Math.ceil((nextPeriod.getTime() - Date.now()) / 86400000)
-    
-    return {
-      nextPeriodDate: nextPeriod.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      daysUntil: daysUntil > 0 ? daysUntil : 0,
-      isImminent: daysUntil <= 3 && daysUntil >= 0,
-    }
-  }, [hasCycle, data.cycleStartDate, data.cycleLength])
+  // actual menstrual cycle being tracked. Deliberately NOT wrapped in
+  // useMemo: the underlying math depends on "today", which isn't a React
+  // dependency, so memoizing on lastPeriodStart/cycleLength alone froze
+  // this at whatever it first computed and left it showing a stale/past
+  // date and an incorrect day count indefinitely (see getNextPeriodPrediction
+  // in dateHelpers.js for the full explanation). This is cheap enough to
+  // just recompute on every render.
+  const prediction = hasCycle && data.cycleStartDate
+    ? getNextPeriodPrediction(data.cycleStartDate, data.cycleLength || 28)
+    : null
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 pb-24 md:pb-8 space-y-6">

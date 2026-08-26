@@ -86,6 +86,18 @@ export default function ClinicPortal({ clinician }) {
     loadInvitations()
   }, [loadPatients, loadInvitations])
 
+  // The roster/invitations lists were otherwise only ever fetched once on
+  // mount, so a patient revoking clinic access mid-session (Profile ->
+  // Disconnect) wouldn't disappear from an already-open portal until a
+  // full page reload — reading as "the clinic can still see the patient's
+  // data" even though the backend link was already gone. Refetch whenever
+  // the tab regains focus so a revoked patient drops out promptly.
+  useEffect(() => {
+    const handleFocus = () => { loadPatients(); loadInvitations() }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [loadPatients, loadInvitations])
+
   const handleGenerateInvite = async () => {
     if (!clinicianId || generatingInvite) return
     setGeneratingInvite(true)
@@ -385,9 +397,11 @@ export default function ClinicPortal({ clinician }) {
                       </p>
                     </div>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                      inv.status === 'accepted' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                      inv.status === 'accepted' ? 'bg-green-100 text-green-700'
+                        : inv.status === 'revoked' ? 'bg-gray-200 text-gray-600'
+                        : 'bg-amber-100 text-amber-700'
                     }`}>
-                      {inv.status === 'accepted' ? '✅ Accepted' : '⏳ Pending'}
+                      {inv.status === 'accepted' ? '✅ Accepted' : inv.status === 'revoked' ? '🚫 Revoked' : '⏳ Pending'}
                     </span>
                   </div>
                 ))}

@@ -25,6 +25,8 @@ INSERT OR IGNORE INTO symptoms (name, category, icon) VALUES
     ('Dizziness',       'neurological', '💫'),
     ('Joint pain',      'pain',         '🦴'),
     ('Muscle aches',    'pain',         '💪'),
+    ('Hip pain',        'pain',         '🦴'),
+    ('Leg pain / sciatica', 'pain',     '🦵'),
     ('Acne',            'general',      '🔴'),
     ('Constipation',    'digestive',    '🚫'),
     ('Diarrhea',        'digestive',    '💧'),
