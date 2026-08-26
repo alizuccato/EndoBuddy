@@ -256,6 +256,32 @@ try {
   console.error('Failed to backfill cycle_day/cycle_phase on existing logs:', e.message)
 }
 
+// One-time backfill for clinic_invitations left stuck at status='accepted'
+// after a patient disconnected before POST /api/clinic/disconnect below
+// was updated to actually revoke them (that fix only affects disconnects
+// happening from here forward — it can't retroactively touch a row for a
+// disconnect that already happened before this code existed). Finds any
+// 'accepted' invitation whose patient no longer has that clinician linked
+// (users.clinician_id is null or points elsewhere now) and marks it
+// revoked, so the clinician's Invitations tab stops showing a patient as
+// actively connected when they aren't. Only touches rows already out of
+// sync, so a no-op on every startup after the first.
+try {
+  const staleAccepted = await teamDb(
+    `SELECT ci.id FROM clinic_invitations ci
+     LEFT JOIN users u ON u.id = ci.patient_id
+     WHERE ci.status = 'accepted' AND (u.id IS NULL OR u.clinician_id IS NULL OR u.clinician_id != ci.clinician_id)`
+  )
+  if (staleAccepted.length > 0) {
+    for (const row of staleAccepted) {
+      await teamDb(`UPDATE clinic_invitations SET status = 'revoked' WHERE id = ?`, [row.id])
+    }
+    console.log(`Backfilled ${staleAccepted.length} stale 'accepted' clinic invitation(s) to 'revoked'.`)
+  }
+} catch (e) {
+  console.error('Failed to backfill stale clinic_invitations status:', e.message)
+}
+
 // Password hashing with scrypt (salt + hash)
 function hashPassword(password) {
   const salt = randomUUID().slice(0, 16)

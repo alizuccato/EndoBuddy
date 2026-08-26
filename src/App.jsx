@@ -504,7 +504,7 @@ function PremiumView({ isPremium, onUpgrade, cycleData, patterns, userId }) {
       {premiumTab==='deep'&&(isPremium?<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={patterns}/></div>:<LockedFeature onUpgrade={onUpgrade} feature="deep"/>)}
       {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns}/>:<LockedFeature onUpgrade={onUpgrade} feature="surgical"/>)}
       {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard userId={userId}/>:<LockedFeature onUpgrade={onUpgrade} feature="treatment"/>)}
-      {premiumTab==='viz'&&(isPremium?<PremiumVisualizations patterns={patterns} currentDayNum={cycleData?.currentDayNum} cycleLength={cycleData?.cycleLength}/>:<LockedFeature onUpgrade={onUpgrade} feature="viz"/>)}
+      {premiumTab==='viz'&&(isPremium?<PremiumVisualizations patterns={patterns} days={cycleData?.days} currentDayNum={cycleData?.currentDayNum} cycleLength={cycleData?.cycleLength}/>:<LockedFeature onUpgrade={onUpgrade} feature="viz"/>)}
     </div>
   )
 }

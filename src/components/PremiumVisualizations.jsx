@@ -14,15 +14,19 @@
  * until that lifestyle-factor logging exists.
  *
  * NOTE on Cycle Compare: per-phase pain averages ARE computed server-side
- * in /api/patterns (see `phaseAverages` in server.js) but are only
- * surfaced today as a single narrative "worst phase" pattern, not as a
- * full per-phase breakdown the client can render. Until that data is
- * exposed via the API, this also renders an honest empty state instead of
- * fabricated phase numbers.
+ * in /api/patterns (see `phaseAverages` in server.js), and — now that
+ * cycle_phase is actually persisted on every log (previously it was
+ * always null; see the dateHelpers.js/server.js fix) — there's real data
+ * to compare a cycle against. Rather than add a second server round-trip,
+ * this computes the same kind of per-phase averages client-side from the
+ * `days` prop (already fetched for the rest of the app), the same way
+ * PremiumDeepReport does its rolling averages.
  */
 
 import { useState, useMemo } from 'react'
 import { PHASE_ORDER } from '../utils/mockData'
+
+const PHASE_LABELS = { menstrual: 'Menstrual', follicular: 'Follicular', ovulatory: 'Ovulatory', luteal: 'Luteal' }
 
 function EmptyVizState({ icon, title, body }) {
   return (
@@ -35,7 +39,7 @@ function EmptyVizState({ icon, title, body }) {
 }
 
 export default function PremiumVisualizations({
-  patterns, isPremium = true,
+  patterns, days, isPremium = true,
   currentDayNum = 15, cycleLength = 28
 }) {
   const [activeViz, setActiveViz] = useState('forecast')
@@ -63,6 +67,47 @@ export default function PremiumVisualizations({
       return { day, predicted, phase, isToday: i === 0 }
     })
   }, [phasePattern, currentDayNum, cycleLength])
+
+  // Cycle Compare — current cycle's per-phase pain averages vs. your
+  // all-time per-phase averages. "Current cycle" is everything logged
+  // from (today - (currentDayNum - 1) days) onward, i.e. since this
+  // cycle's day 1, computed the same way App.jsx derives currentDayNum
+  // in the first place.
+  const cycleCompare = useMemo(() => {
+    const loggedDays = (days || []).filter(d => !d.isFuture && d.painLevel > 0 && d.phase)
+    if (loggedDays.length < 5 || !currentDayNum) return null
+
+    const today = new Date()
+    const cycleStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (currentDayNum - 1))
+    const cycleStartStr = `${cycleStart.getFullYear()}-${String(cycleStart.getMonth() + 1).padStart(2, '0')}-${String(cycleStart.getDate()).padStart(2, '0')}`
+
+    const allTimeByPhase = {}
+    const currentByPhase = {}
+    for (const d of loggedDays) {
+      if (!allTimeByPhase[d.phase]) allTimeByPhase[d.phase] = []
+      allTimeByPhase[d.phase].push(d.painLevel)
+      if (d.date >= cycleStartStr) {
+        if (!currentByPhase[d.phase]) currentByPhase[d.phase] = []
+        currentByPhase[d.phase].push(d.painLevel)
+      }
+    }
+
+    const currentPhases = Object.keys(currentByPhase)
+    if (currentPhases.length === 0) return null
+
+    const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length
+    const rows = PHASE_ORDER
+      .filter(phase => currentByPhase[phase])
+      .map(phase => ({
+        phase,
+        currentAvg: avg(currentByPhase[phase]),
+        allTimeAvg: avg(allTimeByPhase[phase]),
+        currentCount: currentByPhase[phase].length,
+        allTimeCount: allTimeByPhase[phase].length,
+      }))
+
+    return rows
+  }, [days, currentDayNum])
 
   if (!isPremium) {
     return (
@@ -107,10 +152,23 @@ export default function PremiumVisualizations({
             <div className="bg-gray-50 rounded-xl p-4">
               <div className="flex items-end justify-between gap-1 h-32">
                 {forecast.map((day, idx) => {
-                  const height = (day.predicted / 10) * 100
+                  // Capped at 80% (not 100%) so there's always headroom
+                  // above the tallest bar for the number label sitting
+                  // on top of it, even at a predicted pain level of 10.
+                  const height = Math.min(80, (day.predicted / 10) * 100)
                   const color = day.predicted >= 7 ? 'bg-red-400' : day.predicted >= 4 ? 'bg-orange-400' : day.predicted >= 2 ? 'bg-yellow-300' : 'bg-green-300'
                   return (
-                    <div key={idx} className="flex-1 flex flex-col items-center gap-1">
+                    // h-full + justify-end (rather than the previous
+                    // content-sized column, sized only by items-end on
+                    // the parent) gives this column a definite height to
+                    // measure against. Without that, the bar's
+                    // `height: X%` below had no definite containing
+                    // block to resolve percentages against — CSS spec
+                    // treats that as 0, so every bar silently rendered
+                    // at zero height. Only the number label above it was
+                    // ever visible, which is exactly what showed up as
+                    // "just numbers, no graph."
+                    <div key={idx} className="flex-1 h-full flex flex-col justify-end items-center gap-1">
                       <span className={`text-[9px] font-bold ${day.predicted >= 7 ? 'text-red-500' : day.predicted >= 4 ? 'text-orange-500' : 'text-green-500'}`}>{day.predicted}</span>
                       <div className={`w-full rounded-t-lg ${color} ${day.isToday ? 'ring-2 ring-endo-purple ring-offset-1' : ''}`} style={{ height: `${height}%` }} />
                       <span className="text-[9px] text-gray-500">{day.day}</span>
@@ -145,11 +203,41 @@ export default function PremiumVisualizations({
 
       {/* Cycle-over-Cycle Comparison */}
       {activeViz === 'compare' && (
-        <EmptyVizState
-          icon="🔄"
-          title="Not enough cycle history yet"
-          body="Cycle Compare needs pain data logged across full phases of at least two cycles to compare your current cycle against your average. Keep logging and this will populate automatically."
-        />
+        cycleCompare ? (
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500 px-1">This cycle's pain by phase, compared to your all-time average for that phase.</p>
+            {cycleCompare.map(row => {
+              const delta = row.currentAvg - row.allTimeAvg
+              const deltaAbs = Math.abs(delta).toFixed(1)
+              const isHigher = delta > 0.3
+              const isLower = delta < -0.3
+              return (
+                <div key={row.phase} className="bg-gray-50 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-700">{PHASE_LABELS[row.phase] || row.phase}</span>
+                    {(isHigher || isLower) && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isHigher ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                        {isHigher ? '▲' : '▼'} {deltaAbs} vs. average
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-600">
+                    <span>This cycle: <strong className="text-gray-900">{row.currentAvg.toFixed(1)}/10</strong> ({row.currentCount} day{row.currentCount === 1 ? '' : 's'})</span>
+                    <span className="text-gray-300">|</span>
+                    <span>All-time: <strong className="text-gray-900">{row.allTimeAvg.toFixed(1)}/10</strong> ({row.allTimeCount} day{row.allTimeCount === 1 ? '' : 's'})</span>
+                  </div>
+                </div>
+              )
+            })}
+            <p className="text-[10px] text-gray-400 px-1">Based on logged pain levels, grouped by cycle phase. More logged days (especially across multiple full cycles) will make this comparison more reliable.</p>
+          </div>
+        ) : (
+          <EmptyVizState
+            icon="🔄"
+            title="Not enough cycle history yet"
+            body="Cycle Compare needs pain logged (with a computed cycle phase) in your current cycle, plus at least 5 logged days overall, to compare against your average. Keep logging and this will populate automatically."
+          />
+        )
       )}
     </div>
   )
