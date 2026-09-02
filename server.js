@@ -12,6 +12,7 @@ import { randomUUID, scryptSync, timingSafeEqual, createHmac } from 'crypto'
 import { readFileSync, existsSync } from 'fs'
 import { join, extname } from 'path'
 import { computeCyclePhaseForLog } from './src/utils/dateHelpers.js'
+import { LIFESTYLE_FACTORS, LIFESTYLE_FACTOR_KEYS, toLifestyleColumns } from './src/utils/lifestyleFactors.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -126,6 +127,23 @@ try { await teamDb("ALTER TABLE users ADD COLUMN hormone_cycle_tracking INTEGER 
 // define it at all. Production clearly has it already (the app works);
 // this only matters for rebuilding the schema from scratch.
 try { await teamDb("ALTER TABLE daily_logs ADD COLUMN pain_level INTEGER") } catch (e) {}
+
+// Lifestyle factors for the Correlation Map (Premium > Visualizations).
+// Deliberately flat boolean-ish columns (0/1/NULL) on daily_logs, same
+// style as is_period_day and the rest, rather than a separate entries
+// table — there's a fixed small set of factors, each is a same-day
+// yes/no toggle (not a severity scale), so a normalized table would add
+// join overhead for no real flexibility gained. NULL means the person
+// skipped lifestyle logging for that day entirely; 0/1 are real logged
+// answers (see toLifestyleColumns in src/utils/lifestyleFactors.js).
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN poor_sleep INTEGER") } catch (e) {}
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN high_stress INTEGER") } catch (e) {}
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN had_alcohol INTEGER") } catch (e) {}
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN had_caffeine INTEGER") } catch (e) {}
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN low_hydration INTEGER") } catch (e) {}
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN exercised INTEGER") } catch (e) {}
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN ate_gluten INTEGER") } catch (e) {}
+try { await teamDb("ALTER TABLE daily_logs ADD COLUMN ate_dairy INTEGER") } catch (e) {}
 
 // symptom_entries in 001_initial_schema.sql models a normalized
 // symptom_id INTEGER NOT NULL REFERENCES symptoms(id) — but every query
@@ -910,10 +928,14 @@ const router = {
     const painLevel = (isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null
     const overallWellness = (isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : null
     const notes = body.notes ? String(body.notes) : null
+    const lifestyleCols = toLifestyleColumns(body.lifestyleFactors)
     
     await teamDb(
-      `INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, body.userId, body.logDate, cycleDay, cyclePhase, isPeriodDay, flowLevel, painLevel, overallWellness, notes, now, now]
+      `INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, poor_sleep, high_stress, had_alcohol, had_caffeine, low_hydration, exercised, ate_gluten, ate_dairy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, body.userId, body.logDate, cycleDay, cyclePhase, isPeriodDay, flowLevel, painLevel, overallWellness, notes,
+       lifestyleCols.poor_sleep, lifestyleCols.high_stress, lifestyleCols.had_alcohol, lifestyleCols.had_caffeine,
+       lifestyleCols.low_hydration, lifestyleCols.exercised, lifestyleCols.ate_gluten, lifestyleCols.ate_dairy,
+       now, now]
     )
     
     // Save symptoms
@@ -1002,6 +1024,10 @@ const router = {
     if (body.painLevel !== undefined) { updates.push(`pain_level = ?`); args.push((isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null) }
     if (body.overallWellness !== undefined) { updates.push(`overall_wellness = ?`); args.push((isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : null) }
     if (body.notes !== undefined) { updates.push(`notes = ?`); args.push(body.notes ? String(body.notes) : null) }
+    if (body.lifestyleFactors !== undefined) {
+      const lifestyleCols = toLifestyleColumns(body.lifestyleFactors)
+      for (const f of LIFESTYLE_FACTORS) { updates.push(`${f.key} = ?`); args.push(lifestyleCols[f.key]) }
+    }
     
     if (updates.length === 0 && !Array.isArray(body.symptoms)) {
       return json(res, { error: 'No valid fields to update' }, 400)
@@ -1200,7 +1226,8 @@ const router = {
     const patterns = []
 
     // 1. Fetch all logs with symptoms
-    const logRows = await teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day 
+    const logRows = await teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day,
+      dl.poor_sleep, dl.high_stress, dl.had_alcohol, dl.had_caffeine, dl.low_hydration, dl.exercised, dl.ate_gluten, dl.ate_dairy
       FROM daily_logs dl WHERE dl.user_id = ? AND dl.pain_level IS NOT NULL 
       ORDER BY dl.log_date ASC`, [userId])
     
@@ -1311,6 +1338,49 @@ const router = {
           }
         }
       }
+    }
+
+    // ============================================================
+    // LIFESTYLE FACTOR CORRELATION (Correlation Map, Premium > Visualizations)
+    // ============================================================
+    // For each factor, compares average pain on days it was logged "yes"
+    // against days it was logged "no" — days it was never logged at all
+    // (NULL) are excluded from both groups entirely, not folded into
+    // "no" (see toLifestyleColumns in src/utils/lifestyleFactors.js for
+    // why that distinction matters). Requires a minimum of 3 days in
+    // EACH group before surfacing a factor at all, since a comparison
+    // built on 1-2 days either side isn't a pattern, it's noise.
+    for (const factor of LIFESTYLE_FACTORS) {
+      const withFactor = []
+      const withoutFactor = []
+      for (const row of logRows) {
+        const val = row[factor.key]
+        if (val === 1) withFactor.push(row.pain_level)
+        else if (val === 0) withoutFactor.push(row.pain_level)
+      }
+      if (withFactor.length < 3 || withoutFactor.length < 3) continue
+
+      const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length
+      const avgWith = avg(withFactor)
+      const avgWithout = avg(withoutFactor)
+      const diff = avgWith - avgWithout
+      const diffPct = avgWithout > 0 ? Math.round((diff / avgWithout) * 100) : 0
+
+      // A quarter-point-or-less difference isn't meaningfully different
+      // pain, whichever direction — skip rather than report noise as a
+      // correlation.
+      if (Math.abs(diff) < 0.25) continue
+
+      patterns.push({
+        id: randomUUID(),
+        type: 'lifestyle_correlation',
+        title: `${factor.label}: ${diff > 0 ? 'higher' : 'lower'} pain on those days`,
+        description: `Days you logged "${factor.label.toLowerCase()}" averaged ${avgWith.toFixed(1)}/10 pain, vs ${avgWithout.toFixed(1)}/10 on days you didn't (${Math.abs(diffPct)}% ${diff > 0 ? 'higher' : 'lower'}).`,
+        severity: diff >= 2 ? 'warning' : 'info',
+        icon: factor.icon,
+        confidence: Math.min(0.85, 0.4 + Math.min(withFactor.length, withoutFactor.length) / 30),
+        metric: { factor: factor.key, label: factor.label, icon: factor.icon, avgWith: avgWith.toFixed(1), avgWithout: avgWithout.toFixed(1), diffPct, withCount: withFactor.length, withoutCount: withoutFactor.length },
+      })
     }
 
     // ============================================================

@@ -6,12 +6,13 @@
  * 2. Correlation Matrix — heat-map of factors vs pain
  * 3. Cycle-over-Cycle Comparison
  *
- * NOTE on Correlation Map: the app does not currently log stress, sleep,
- * alcohol, gluten, dairy, caffeine, exercise, or hydration as structured
- * data (only pain, symptoms, flow, and wellness are captured today), so
- * there's no real signal to compute these correlations from yet. Rather
- * than show fabricated percentages, this renders an honest empty state
- * until that lifestyle-factor logging exists.
+ * NOTE on Correlation Map: lifestyle factors (sleep, stress, alcohol,
+ * caffeine, hydration, exercise, gluten, dairy) are now logged via the
+ * optional Lifestyle step in the logging flow (see LifestyleFactorsStep
+ * and src/utils/lifestyleFactors.js), and GET /api/patterns computes a
+ * `lifestyle_correlation` pattern per factor once there's enough data
+ * (>=3 logged days on each side of "yes"/"no" for that factor). This
+ * renders those, same as the phase-correlation forecast above it.
  *
  * NOTE on Cycle Compare: per-phase pain averages ARE computed server-side
  * in /api/patterns (see `phaseAverages` in server.js), and — now that
@@ -109,6 +110,17 @@ export default function PremiumVisualizations({
     return rows
   }, [days, currentDayNum])
 
+  // Correlation Map — lifestyle_correlation patterns computed server-side
+  // in GET /api/patterns (see server.js), one per factor that has enough
+  // logged data on both sides to be meaningful. Sorted so the strongest
+  // correlations (by absolute % difference) surface first.
+  const lifestyleCorrelations = useMemo(() => {
+    return (patterns || [])
+      .filter(p => p.type === 'lifestyle_correlation')
+      .slice()
+      .sort((a, b) => Math.abs(b.metric?.diffPct || 0) - Math.abs(a.metric?.diffPct || 0))
+  }, [patterns])
+
   if (!isPremium) {
     return (
       <div className="card text-center py-8">
@@ -194,11 +206,37 @@ export default function PremiumVisualizations({
 
       {/* Correlation Matrix */}
       {activeViz === 'correlation' && (
-        <EmptyVizState
-          icon="🗺️"
-          title="Correlation tracking isn't available yet"
-          body="This map needs lifestyle factors like stress, sleep, alcohol, gluten, dairy, caffeine, exercise, and hydration — none of which are logged in the app yet. Once that tracking is added, real correlations with your pain will show up here."
-        />
+        lifestyleCorrelations.length > 0 ? (
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500 px-1">Average pain on days you logged each factor vs. days you didn't.</p>
+            {lifestyleCorrelations.map(p => {
+              const m = p.metric
+              const isHigher = m.diffPct > 0
+              return (
+                <div key={p.id} className="bg-gray-50 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-700">{m.icon} {m.label}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isHigher ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                      {isHigher ? '▲' : '▼'} {Math.abs(m.diffPct)}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-600">
+                    <span>Days with: <strong className="text-gray-900">{m.avgWith}/10</strong> ({m.withCount})</span>
+                    <span className="text-gray-300">|</span>
+                    <span>Days without: <strong className="text-gray-900">{m.avgWithout}/10</strong> ({m.withoutCount})</span>
+                  </div>
+                </div>
+              )
+            })}
+            <p className="text-[10px] text-gray-400 px-1">ⓘ Correlational, not causal — these reflect patterns in your own logged data, not a medical diagnosis. Keep logging for more reliable results.</p>
+          </div>
+        ) : (
+          <EmptyVizState
+            icon="🗺️"
+            title="Not enough lifestyle data logged yet"
+            body="Use the optional Lifestyle step when logging (sleep, stress, alcohol, caffeine, hydration, exercise, gluten, dairy) — once a factor has at least 3 logged days each with and without it, its correlation with your pain will show up here."
+          />
+        )
       )}
 
       {/* Cycle-over-Cycle Comparison */}

@@ -9,14 +9,18 @@
  *   1. Entry / Pain Scale (1-10 grid)
  *   2. Symptom Selection (category grid, multi-select)
  *   3. Cycle Info (flow level, optional, shown contextually)
- *   4. Notes & Finish (voice-to-text + done)
- *   5. Confirmation (summary + next actions)
+ *   4. Lifestyle Factors (optional toggles, skippable, powers the
+ *      Correlation Map) — not shown in the numbered step indicator
+ *      above, since it's a fully optional add-on rather than a core step
+ *   5. Notes & Finish (voice-to-text + done)
+ *   6. Confirmation (summary + next actions)
  */
 
 import { useState, useCallback, useMemo } from 'react'
 import PainScaleStep from './PainScaleStep'
 import SymptomGrid from './SymptomGrid'
 import CycleInfoStep from './CycleInfoStep'
+import LifestyleFactorsStep from './LifestyleFactorsStep'
 import NotesStep from './NotesStep'
 import ConfirmationStep from './ConfirmationStep'
 
@@ -24,6 +28,7 @@ const STEPS_WITH_CYCLE = [
   'pain',
   'symptoms',
   'cycle',
+  'lifestyle',
   'notes',
   'confirmation',
 ]
@@ -31,6 +36,7 @@ const STEPS_WITH_CYCLE = [
 const STEPS_NO_CYCLE = [
   'pain',
   'symptoms',
+  'lifestyle',
   'notes',
   'confirmation',
 ]
@@ -74,8 +80,8 @@ export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
     if (field === '_next') {
       // Trigger next step from child components — goToStep is stable
       if (currentStep === 'pain') { setCurrentStep('symptoms'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-      else if (currentStep === 'symptoms') { setCurrentStep(hasCycle ? 'cycle' : 'notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-      else if (currentStep === 'cycle') { setCurrentStep('notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+      else if (currentStep === 'symptoms') { setCurrentStep(hasCycle ? 'cycle' : 'lifestyle'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+      else if (currentStep === 'cycle') { setCurrentStep('lifestyle'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
       return
     }
     setLogData(prev => ({ ...prev, [field]: value }))
@@ -91,14 +97,32 @@ export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
   }, [goToStep])
 
   const handleSymptomsNext = useCallback(() => {
-    goToStep('cycle')
-  }, [goToStep])
+    goToStep(hasCycle ? 'cycle' : 'lifestyle')
+  }, [goToStep, hasCycle])
 
   const handleCycleNext = useCallback(() => {
-    goToStep('notes')
+    goToStep('lifestyle')
   }, [goToStep])
 
   const handleCycleSkip = useCallback(() => {
+    goToStep('lifestyle')
+  }, [goToStep])
+
+  // "Next" here means the person actually engaged with the lifestyle
+  // toggles (even if they left every one of them off), so it's recorded
+  // as a real set of answers, defaulting to {} if nothing was touched.
+  // "Skip" means they opted out of lifestyle logging for this entry
+  // altogether, so logData.lifestyleFactors is left as-is (undefined —
+  // see the initial useState below), which omits the key from the
+  // request body entirely and stores NULL for every factor server-side,
+  // not a false "no." See src/utils/lifestyleFactors.js for why that
+  // distinction matters for the Correlation Map's math.
+  const handleLifestyleNext = useCallback(() => {
+    setLogData(prev => ({ ...prev, lifestyleFactors: prev.lifestyleFactors || {} }))
+    goToStep('notes')
+  }, [goToStep])
+
+  const handleLifestyleSkip = useCallback(() => {
     goToStep('notes')
   }, [goToStep])
 
@@ -211,6 +235,15 @@ export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
             onNext={handleCycleNext}
             onSkip={handleCycleSkip}
             isPeriodDay={logData.isPeriodDay}
+          />
+        )}
+
+        {currentStep === 'lifestyle' && (
+          <LifestyleFactorsStep
+            factors={logData.lifestyleFactors}
+            onSelect={handleSelect}
+            onNext={handleLifestyleNext}
+            onSkip={handleLifestyleSkip}
           />
         )}
 

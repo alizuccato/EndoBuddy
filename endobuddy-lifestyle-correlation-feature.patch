@@ -1,0 +1,458 @@
+diff --git a/server.js b/server.js
+index 88f7456..92bbf06 100644
+--- a/server.js
++++ b/server.js
+@@ -12,6 +12,7 @@ import { randomUUID, scryptSync, timingSafeEqual, createHmac } from 'crypto'
+ import { readFileSync, existsSync } from 'fs'
+ import { join, extname } from 'path'
+ import { computeCyclePhaseForLog } from './src/utils/dateHelpers.js'
++import { LIFESTYLE_FACTORS, LIFESTYLE_FACTOR_KEYS, toLifestyleColumns } from './src/utils/lifestyleFactors.js'
+ 
+ const PORT = process.env.PORT || 3001
+ 
+@@ -127,6 +128,23 @@ try { await teamDb("ALTER TABLE users ADD COLUMN hormone_cycle_tracking INTEGER
+ // this only matters for rebuilding the schema from scratch.
+ try { await teamDb("ALTER TABLE daily_logs ADD COLUMN pain_level INTEGER") } catch (e) {}
+ 
++// Lifestyle factors for the Correlation Map (Premium > Visualizations).
++// Deliberately flat boolean-ish columns (0/1/NULL) on daily_logs, same
++// style as is_period_day and the rest, rather than a separate entries
++// table — there's a fixed small set of factors, each is a same-day
++// yes/no toggle (not a severity scale), so a normalized table would add
++// join overhead for no real flexibility gained. NULL means the person
++// skipped lifestyle logging for that day entirely; 0/1 are real logged
++// answers (see toLifestyleColumns in src/utils/lifestyleFactors.js).
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN poor_sleep INTEGER") } catch (e) {}
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN high_stress INTEGER") } catch (e) {}
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN had_alcohol INTEGER") } catch (e) {}
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN had_caffeine INTEGER") } catch (e) {}
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN low_hydration INTEGER") } catch (e) {}
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN exercised INTEGER") } catch (e) {}
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN ate_gluten INTEGER") } catch (e) {}
++try { await teamDb("ALTER TABLE daily_logs ADD COLUMN ate_dairy INTEGER") } catch (e) {}
++
+ // symptom_entries in 001_initial_schema.sql models a normalized
+ // symptom_id INTEGER NOT NULL REFERENCES symptoms(id) — but every query
+ // in this file (see POST/PUT /api/logs, GET /api/symptoms/:logId, the
+@@ -910,10 +928,14 @@ const router = {
+     const painLevel = (isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null
+     const overallWellness = (isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : null
+     const notes = body.notes ? String(body.notes) : null
++    const lifestyleCols = toLifestyleColumns(body.lifestyleFactors)
+     
+     await teamDb(
+-      `INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+-      [id, body.userId, body.logDate, cycleDay, cyclePhase, isPeriodDay, flowLevel, painLevel, overallWellness, notes, now, now]
++      `INSERT INTO daily_logs (id, user_id, log_date, cycle_day, cycle_phase, is_period_day, flow_level, pain_level, overall_wellness, notes, poor_sleep, high_stress, had_alcohol, had_caffeine, low_hydration, exercised, ate_gluten, ate_dairy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++      [id, body.userId, body.logDate, cycleDay, cyclePhase, isPeriodDay, flowLevel, painLevel, overallWellness, notes,
++       lifestyleCols.poor_sleep, lifestyleCols.high_stress, lifestyleCols.had_alcohol, lifestyleCols.had_caffeine,
++       lifestyleCols.low_hydration, lifestyleCols.exercised, lifestyleCols.ate_gluten, lifestyleCols.ate_dairy,
++       now, now]
+     )
+     
+     // Save symptoms
+@@ -1002,6 +1024,10 @@ const router = {
+     if (body.painLevel !== undefined) { updates.push(`pain_level = ?`); args.push((isValidNumber(body.painLevel) && body.painLevel >= 0 && body.painLevel <= 10) ? Number(body.painLevel) : null) }
+     if (body.overallWellness !== undefined) { updates.push(`overall_wellness = ?`); args.push((isValidNumber(body.overallWellness) && body.overallWellness >= 1 && body.overallWellness <= 10) ? Number(body.overallWellness) : null) }
+     if (body.notes !== undefined) { updates.push(`notes = ?`); args.push(body.notes ? String(body.notes) : null) }
++    if (body.lifestyleFactors !== undefined) {
++      const lifestyleCols = toLifestyleColumns(body.lifestyleFactors)
++      for (const f of LIFESTYLE_FACTORS) { updates.push(`${f.key} = ?`); args.push(lifestyleCols[f.key]) }
++    }
+     
+     if (updates.length === 0 && !Array.isArray(body.symptoms)) {
+       return json(res, { error: 'No valid fields to update' }, 400)
+@@ -1200,7 +1226,8 @@ const router = {
+     const patterns = []
+ 
+     // 1. Fetch all logs with symptoms
+-    const logRows = await teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day 
++    const logRows = await teamDb(`SELECT dl.id, dl.log_date, dl.cycle_phase, dl.pain_level, dl.cycle_day,
++      dl.poor_sleep, dl.high_stress, dl.had_alcohol, dl.had_caffeine, dl.low_hydration, dl.exercised, dl.ate_gluten, dl.ate_dairy
+       FROM daily_logs dl WHERE dl.user_id = ? AND dl.pain_level IS NOT NULL 
+       ORDER BY dl.log_date ASC`, [userId])
+     
+@@ -1313,6 +1340,49 @@ const router = {
+       }
+     }
+ 
++    // ============================================================
++    // LIFESTYLE FACTOR CORRELATION (Correlation Map, Premium > Visualizations)
++    // ============================================================
++    // For each factor, compares average pain on days it was logged "yes"
++    // against days it was logged "no" — days it was never logged at all
++    // (NULL) are excluded from both groups entirely, not folded into
++    // "no" (see toLifestyleColumns in src/utils/lifestyleFactors.js for
++    // why that distinction matters). Requires a minimum of 3 days in
++    // EACH group before surfacing a factor at all, since a comparison
++    // built on 1-2 days either side isn't a pattern, it's noise.
++    for (const factor of LIFESTYLE_FACTORS) {
++      const withFactor = []
++      const withoutFactor = []
++      for (const row of logRows) {
++        const val = row[factor.key]
++        if (val === 1) withFactor.push(row.pain_level)
++        else if (val === 0) withoutFactor.push(row.pain_level)
++      }
++      if (withFactor.length < 3 || withoutFactor.length < 3) continue
++
++      const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length
++      const avgWith = avg(withFactor)
++      const avgWithout = avg(withoutFactor)
++      const diff = avgWith - avgWithout
++      const diffPct = avgWithout > 0 ? Math.round((diff / avgWithout) * 100) : 0
++
++      // A quarter-point-or-less difference isn't meaningfully different
++      // pain, whichever direction — skip rather than report noise as a
++      // correlation.
++      if (Math.abs(diff) < 0.25) continue
++
++      patterns.push({
++        id: randomUUID(),
++        type: 'lifestyle_correlation',
++        title: `${factor.label}: ${diff > 0 ? 'higher' : 'lower'} pain on those days`,
++        description: `Days you logged "${factor.label.toLowerCase()}" averaged ${avgWith.toFixed(1)}/10 pain, vs ${avgWithout.toFixed(1)}/10 on days you didn't (${Math.abs(diffPct)}% ${diff > 0 ? 'higher' : 'lower'}).`,
++        severity: diff >= 2 ? 'warning' : 'info',
++        icon: factor.icon,
++        confidence: Math.min(0.85, 0.4 + Math.min(withFactor.length, withoutFactor.length) / 30),
++        metric: { factor: factor.key, label: factor.label, icon: factor.icon, avgWith: avgWith.toFixed(1), avgWithout: avgWithout.toFixed(1), diffPct, withCount: withFactor.length, withoutCount: withoutFactor.length },
++      })
++    }
++
+     // ============================================================
+     // ANALYSIS 2: Symptom Clusters
+     // ============================================================
+diff --git a/src/components/LifestyleFactorsStep.jsx b/src/components/LifestyleFactorsStep.jsx
+new file mode 100644
+index 0000000..6402de8
+--- /dev/null
++++ b/src/components/LifestyleFactorsStep.jsx
+@@ -0,0 +1,82 @@
++/**
++ * LifestyleFactorsStep
++ *
++ * Optional step in the logging flow: quick yes/no toggles for lifestyle
++ * factors (sleep, stress, alcohol, caffeine, hydration, exercise,
++ * gluten, dairy), used to power the Correlation Map in Premium >
++ * Visualizations. Free to log for everyone — only *seeing* the
++ * resulting correlations is Premium.
++ *
++ * Entirely skippable: tapping "Skip" moves on without recording
++ * anything for this log (stored as NULL server-side, meaning "not
++ * logged" — see toLifestyleColumns in src/utils/lifestyleFactors.js).
++ * Tapping "Next" after engaging with the toggles (even with none
++ * turned on) records a real "no" for every factor left off. That
++ * distinction is what keeps the Correlation Map's math honest — see
++ * the same file for why.
++ */
++
++import { LIFESTYLE_FACTORS } from '../utils/lifestyleFactors'
++
++export default function LifestyleFactorsStep({ factors = {}, onSelect, onNext, onSkip }) {
++  const toggleFactor = (bodyKey) => {
++    onSelect('lifestyleFactors', { ...factors, [bodyKey]: !factors[bodyKey] })
++  }
++
++  const selectedCount = Object.values(factors).filter(Boolean).length
++
++  return (
++    <div className="space-y-6">
++      <div className="text-center">
++        <h2 className="text-2xl font-bold text-gray-900 mb-2">
++          Anything else going on today?
++        </h2>
++        <p className="text-gray-500 text-sm">
++          Tap what applies — totally optional, helps spot patterns over time
++        </p>
++      </div>
++
++      <div className="max-w-lg mx-auto">
++        <div className="grid grid-cols-3 gap-2">
++          {LIFESTYLE_FACTORS.map((factor) => {
++            const isSelected = !!factors[factor.bodyKey]
++            return (
++              <button
++                key={factor.key}
++                onClick={() => toggleFactor(factor.bodyKey)}
++                className={`
++                  flex flex-col items-center justify-center
++                  min-h-[4rem] p-2 rounded-xl
++                  text-sm font-medium
++                  transition-all duration-150
++                  focus:outline-none focus:ring-2 focus:ring-endo-purple focus:ring-offset-1
++                  ${isSelected
++                    ? 'bg-endo-purple text-white shadow-md scale-[1.02]'
++                    : 'bg-gray-50 text-gray-700 hover:bg-gray-100 hover:shadow-sm border border-gray-100'
++                  }
++                `}
++                role="checkbox"
++                aria-checked={isSelected}
++              >
++                <span className="text-2xl mb-1">{factor.icon}</span>
++                <span className="text-[11px] leading-tight text-center">{factor.label}</span>
++              </button>
++            )
++          })}
++        </div>
++        <p className="text-[10px] text-gray-400 mt-3 text-center">
++          {selectedCount > 0 ? `${selectedCount} selected` : 'Nothing selected yet — that\'s fine too'}
++        </p>
++      </div>
++
++      <div className="flex justify-center gap-3">
++        <button onClick={onSkip} className="px-6 py-2.5 text-sm text-gray-500 font-medium">
++          Skip
++        </button>
++        <button onClick={onNext} className="btn-primary px-8 py-2.5">
++          Next
++        </button>
++      </div>
++    </div>
++  )
++}
+diff --git a/src/components/LoggingFlow.jsx b/src/components/LoggingFlow.jsx
+index 9d72c1c..a87e48d 100644
+--- a/src/components/LoggingFlow.jsx
++++ b/src/components/LoggingFlow.jsx
+@@ -9,14 +9,18 @@
+  *   1. Entry / Pain Scale (1-10 grid)
+  *   2. Symptom Selection (category grid, multi-select)
+  *   3. Cycle Info (flow level, optional, shown contextually)
+- *   4. Notes & Finish (voice-to-text + done)
+- *   5. Confirmation (summary + next actions)
++ *   4. Lifestyle Factors (optional toggles, skippable, powers the
++ *      Correlation Map) — not shown in the numbered step indicator
++ *      above, since it's a fully optional add-on rather than a core step
++ *   5. Notes & Finish (voice-to-text + done)
++ *   6. Confirmation (summary + next actions)
+  */
+ 
+ import { useState, useCallback, useMemo } from 'react'
+ import PainScaleStep from './PainScaleStep'
+ import SymptomGrid from './SymptomGrid'
+ import CycleInfoStep from './CycleInfoStep'
++import LifestyleFactorsStep from './LifestyleFactorsStep'
+ import NotesStep from './NotesStep'
+ import ConfirmationStep from './ConfirmationStep'
+ 
+@@ -24,6 +28,7 @@ const STEPS_WITH_CYCLE = [
+   'pain',
+   'symptoms',
+   'cycle',
++  'lifestyle',
+   'notes',
+   'confirmation',
+ ]
+@@ -31,6 +36,7 @@ const STEPS_WITH_CYCLE = [
+ const STEPS_NO_CYCLE = [
+   'pain',
+   'symptoms',
++  'lifestyle',
+   'notes',
+   'confirmation',
+ ]
+@@ -74,8 +80,8 @@ export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
+     if (field === '_next') {
+       // Trigger next step from child components — goToStep is stable
+       if (currentStep === 'pain') { setCurrentStep('symptoms'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+-      else if (currentStep === 'symptoms') { setCurrentStep(hasCycle ? 'cycle' : 'notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+-      else if (currentStep === 'cycle') { setCurrentStep('notes'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
++      else if (currentStep === 'symptoms') { setCurrentStep(hasCycle ? 'cycle' : 'lifestyle'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
++      else if (currentStep === 'cycle') { setCurrentStep('lifestyle'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+       return
+     }
+     setLogData(prev => ({ ...prev, [field]: value }))
+@@ -91,14 +97,32 @@ export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
+   }, [goToStep])
+ 
+   const handleSymptomsNext = useCallback(() => {
+-    goToStep('cycle')
+-  }, [goToStep])
++    goToStep(hasCycle ? 'cycle' : 'lifestyle')
++  }, [goToStep, hasCycle])
+ 
+   const handleCycleNext = useCallback(() => {
+-    goToStep('notes')
++    goToStep('lifestyle')
+   }, [goToStep])
+ 
+   const handleCycleSkip = useCallback(() => {
++    goToStep('lifestyle')
++  }, [goToStep])
++
++  // "Next" here means the person actually engaged with the lifestyle
++  // toggles (even if they left every one of them off), so it's recorded
++  // as a real set of answers, defaulting to {} if nothing was touched.
++  // "Skip" means they opted out of lifestyle logging for this entry
++  // altogether, so logData.lifestyleFactors is left as-is (undefined —
++  // see the initial useState below), which omits the key from the
++  // request body entirely and stores NULL for every factor server-side,
++  // not a false "no." See src/utils/lifestyleFactors.js for why that
++  // distinction matters for the Correlation Map's math.
++  const handleLifestyleNext = useCallback(() => {
++    setLogData(prev => ({ ...prev, lifestyleFactors: prev.lifestyleFactors || {} }))
++    goToStep('notes')
++  }, [goToStep])
++
++  const handleLifestyleSkip = useCallback(() => {
+     goToStep('notes')
+   }, [goToStep])
+ 
+@@ -214,6 +238,15 @@ export default function LoggingFlow({ onComplete, onClose, hasCycle = true }) {
+           />
+         )}
+ 
++        {currentStep === 'lifestyle' && (
++          <LifestyleFactorsStep
++            factors={logData.lifestyleFactors}
++            onSelect={handleSelect}
++            onNext={handleLifestyleNext}
++            onSkip={handleLifestyleSkip}
++          />
++        )}
++
+         {currentStep === 'notes' && (
+           <NotesStep
+             notes={logData.notes}
+diff --git a/src/components/PremiumVisualizations.jsx b/src/components/PremiumVisualizations.jsx
+index 7234eb3..07301a1 100644
+--- a/src/components/PremiumVisualizations.jsx
++++ b/src/components/PremiumVisualizations.jsx
+@@ -6,12 +6,13 @@
+  * 2. Correlation Matrix — heat-map of factors vs pain
+  * 3. Cycle-over-Cycle Comparison
+  *
+- * NOTE on Correlation Map: the app does not currently log stress, sleep,
+- * alcohol, gluten, dairy, caffeine, exercise, or hydration as structured
+- * data (only pain, symptoms, flow, and wellness are captured today), so
+- * there's no real signal to compute these correlations from yet. Rather
+- * than show fabricated percentages, this renders an honest empty state
+- * until that lifestyle-factor logging exists.
++ * NOTE on Correlation Map: lifestyle factors (sleep, stress, alcohol,
++ * caffeine, hydration, exercise, gluten, dairy) are now logged via the
++ * optional Lifestyle step in the logging flow (see LifestyleFactorsStep
++ * and src/utils/lifestyleFactors.js), and GET /api/patterns computes a
++ * `lifestyle_correlation` pattern per factor once there's enough data
++ * (>=3 logged days on each side of "yes"/"no" for that factor). This
++ * renders those, same as the phase-correlation forecast above it.
+  *
+  * NOTE on Cycle Compare: per-phase pain averages ARE computed server-side
+  * in /api/patterns (see `phaseAverages` in server.js), and — now that
+@@ -109,6 +110,17 @@ export default function PremiumVisualizations({
+     return rows
+   }, [days, currentDayNum])
+ 
++  // Correlation Map — lifestyle_correlation patterns computed server-side
++  // in GET /api/patterns (see server.js), one per factor that has enough
++  // logged data on both sides to be meaningful. Sorted so the strongest
++  // correlations (by absolute % difference) surface first.
++  const lifestyleCorrelations = useMemo(() => {
++    return (patterns || [])
++      .filter(p => p.type === 'lifestyle_correlation')
++      .slice()
++      .sort((a, b) => Math.abs(b.metric?.diffPct || 0) - Math.abs(a.metric?.diffPct || 0))
++  }, [patterns])
++
+   if (!isPremium) {
+     return (
+       <div className="card text-center py-8">
+@@ -194,11 +206,37 @@ export default function PremiumVisualizations({
+ 
+       {/* Correlation Matrix */}
+       {activeViz === 'correlation' && (
+-        <EmptyVizState
+-          icon="🗺️"
+-          title="Correlation tracking isn't available yet"
+-          body="This map needs lifestyle factors like stress, sleep, alcohol, gluten, dairy, caffeine, exercise, and hydration — none of which are logged in the app yet. Once that tracking is added, real correlations with your pain will show up here."
+-        />
++        lifestyleCorrelations.length > 0 ? (
++          <div className="space-y-3">
++            <p className="text-xs text-gray-500 px-1">Average pain on days you logged each factor vs. days you didn't.</p>
++            {lifestyleCorrelations.map(p => {
++              const m = p.metric
++              const isHigher = m.diffPct > 0
++              return (
++                <div key={p.id} className="bg-gray-50 rounded-xl p-3">
++                  <div className="flex items-center justify-between mb-2">
++                    <span className="text-xs font-semibold text-gray-700">{m.icon} {m.label}</span>
++                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isHigher ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
++                      {isHigher ? '▲' : '▼'} {Math.abs(m.diffPct)}%
++                    </span>
++                  </div>
++                  <div className="flex items-center gap-3 text-xs text-gray-600">
++                    <span>Days with: <strong className="text-gray-900">{m.avgWith}/10</strong> ({m.withCount})</span>
++                    <span className="text-gray-300">|</span>
++                    <span>Days without: <strong className="text-gray-900">{m.avgWithout}/10</strong> ({m.withoutCount})</span>
++                  </div>
++                </div>
++              )
++            })}
++            <p className="text-[10px] text-gray-400 px-1">ⓘ Correlational, not causal — these reflect patterns in your own logged data, not a medical diagnosis. Keep logging for more reliable results.</p>
++          </div>
++        ) : (
++          <EmptyVizState
++            icon="🗺️"
++            title="Not enough lifestyle data logged yet"
++            body="Use the optional Lifestyle step when logging (sleep, stress, alcohol, caffeine, hydration, exercise, gluten, dairy) — once a factor has at least 3 logged days each with and without it, its correlation with your pain will show up here."
++          />
++        )
+       )}
+ 
+       {/* Cycle-over-Cycle Comparison */}
+diff --git a/src/utils/lifestyleFactors.js b/src/utils/lifestyleFactors.js
+new file mode 100644
+index 0000000..dbe129e
+--- /dev/null
++++ b/src/utils/lifestyleFactors.js
+@@ -0,0 +1,51 @@
++/**
++ * lifestyleFactors
++ *
++ * Single source of truth for the 8 lifestyle factors tracked for the
++ * Correlation Map (Premium > Visualizations). Shared between:
++ *  - LifestyleFactorsStep.jsx (the logging UI — quick toggle chips)
++ *  - server.js (validating incoming log data, and computing the
++ *    per-factor pain correlation in GET /api/patterns)
++ *
++ * Each factor is a same-day present/not-logged toggle, not a severity
++ * scale — `key` is the daily_logs column name (INTEGER, NULL = not
++ * logged, 1 = present that day). Kept in one file so the toggle UI and
++ * the correlation math can never disagree about what a factor is called
++ * or what it means.
++ */
++
++export const LIFESTYLE_FACTORS = [
++  { key: 'poor_sleep', bodyKey: 'poorSleep', label: 'Poor sleep', icon: '😴' },
++  { key: 'high_stress', bodyKey: 'highStress', label: 'High stress', icon: '😰' },
++  { key: 'had_alcohol', bodyKey: 'hadAlcohol', label: 'Alcohol', icon: '🍷' },
++  { key: 'had_caffeine', bodyKey: 'hadCaffeine', label: 'Caffeine', icon: '☕' },
++  { key: 'low_hydration', bodyKey: 'lowHydration', label: 'Low water intake', icon: '🚱' },
++  { key: 'exercised', bodyKey: 'exercised', label: 'Exercised', icon: '🏃' },
++  { key: 'ate_gluten', bodyKey: 'ateGluten', label: 'Ate gluten', icon: '🌾' },
++  { key: 'ate_dairy', bodyKey: 'ateDairy', label: 'Ate dairy', icon: '🧀' },
++]
++
++export const LIFESTYLE_FACTOR_KEYS = LIFESTYLE_FACTORS.map(f => f.key)
++
++// factors is the client's lifestyleFactors object for one log (e.g.
++// { poorSleep: true, hadAlcohol: false }), or undefined/null if the
++// person skipped the whole lifestyle step for that log entirely.
++//
++// Two different kinds of "no" have to stay distinguishable here:
++//  - The person opened the step and left a toggle off ("no, that didn't
++//    happen") -> stored as 0, a real data point.
++//  - The person skipped the step altogether -> stored as NULL for every
++//    factor, meaning "not logged," not "no."
++// Collapsing those together would silently bias the correlation math in
++// GET /api/patterns toward "no" for every day someone just didn't open
++// the step, which would understate real correlations. So: `factors`
++// present (even as {}) means the step was engaged and every factor not
++// explicitly set to true is a real "no" (0); `factors` absent means
++// none of it was logged (NULL, excluded from the correlation entirely).
++export function toLifestyleColumns(factors) {
++  const cols = {}
++  for (const f of LIFESTYLE_FACTORS) {
++    cols[f.key] = factors ? (factors[f.bodyKey] ? 1 : 0) : null
++  }
++  return cols
++}
