@@ -303,6 +303,33 @@ export async function completeOnboarding(onboardingData, existingUserId) {
 }
 
 // ============================================================
+// Doctor Reports API
+// ============================================================
+
+// Saves a generated report (report_type: 'general' | 'lesion_mapping') so
+// it becomes visible to whichever clinician this patient is currently
+// linked to — visibility is governed entirely by the existing accepted
+// clinic link, there's no separate per-report send step.
+export async function saveDoctorReport(reportData) {
+  const userId = reportData.userId || getUserId()
+  return request('/reports', {
+    method: 'POST',
+    body: JSON.stringify({ ...reportData, userId }),
+  })
+}
+
+export async function getDoctorReports(userId) {
+  return request(`/reports/${userId || getUserId()}`)
+}
+
+// Called from the Clinic Portal's Report Vault to open one specific
+// patient's report. Fails with 403 if that patient isn't (or is no
+// longer) linked to this clinician.
+export async function getClinicPatientReport(clinicianId, patientId, reportId) {
+  return request(`/clinic/${clinicianId}/patients/${patientId}/reports/${reportId}`)
+}
+
+// ============================================================
 // Clinic API
 // ============================================================
 
