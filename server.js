@@ -1750,6 +1750,117 @@ const router = {
     json(res, { success: true })
   },
 
+  // ===== DOCTOR REPORTS =====
+  // A patient saves a report they've generated (DoctorReport.jsx's
+  // "general" summary, or SurgicalPlanningSummary.jsx's "lesion_mapping"
+  // assessment) so it becomes visible to whichever clinician they're
+  // currently linked to (users.clinician_id) — no separate per-report
+  // send/approve step; the existing accepted clinic invitation IS the
+  // consent to share. report_data is stored as opaque JSON since its
+  // shape differs by report_type and this table doesn't need to query
+  // into it, only return it whole to a patient or their linked clinician.
+  'POST /api/reports': async (req, res) => {
+    const body = await parseBody(req)
+    if (!isValidUUID(body.userId)) return json(res, { error: 'Invalid or missing user ID' }, 400)
+    if (!(await verifyUserAuth(req, res, body.userId))) return
+
+    if (!['general', 'lesion_mapping'].includes(body.reportType)) {
+      return json(res, { error: 'reportType must be "general" or "lesion_mapping"' }, 400)
+    }
+    if (!body.reportData || typeof body.reportData !== 'object') {
+      return json(res, { error: 'reportData is required' }, 400)
+    }
+
+    const today = new Date().toISOString().slice(0, 10)
+    // Lesion mapping reports don't have a date-range picker in the UI
+    // (they're derived from all logged patterns, not a chosen window),
+    // so default both bounds to today rather than rejecting the save.
+    const startDate = isValidDate(body.startDate) ? body.startDate : today
+    const endDate = isValidDate(body.endDate) ? body.endDate : today
+
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    let reportDataJson
+    try {
+      reportDataJson = JSON.stringify(body.reportData)
+    } catch (e) {
+      return json(res, { error: 'reportData could not be serialized' }, 400)
+    }
+
+    await teamDb(
+      `INSERT INTO doctor_reports (id, user_id, start_date, end_date, report_type, report_data, generated_at, shared_count) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+      [id, body.userId, startDate, endDate, body.reportType, reportDataJson, now]
+    )
+    json(res, { id, reportType: body.reportType, startDate, endDate, generatedAt: now }, 201)
+  },
+
+  // A patient's own report list — used by e.g. their Profile/history view
+  // to show what's been generated so far. Distinct from the clinician
+  // route below, which additionally checks the clinic link.
+  'GET /api/reports/:userId': async (req, res, params) => {
+    if (!isValidUUID(params.userId)) return json(res, { error: 'Invalid user ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.userId))) return
+
+    const rows = await teamDb(
+      `SELECT id, report_type, start_date, end_date, generated_at FROM doctor_reports WHERE user_id = ? ORDER BY generated_at DESC`,
+      [params.userId]
+    )
+    json(res, rows.map(r => ({ id: r.id, type: r.report_type, startDate: r.start_date, endDate: r.end_date, generatedAt: r.generated_at })))
+  },
+
+  // A clinician opening one specific report from a linked patient's
+  // Report Vault. Authorization has two parts: the caller must be
+  // authenticated as this clinician (verifyUserAuth), AND the target
+  // patient's users.clinician_id must currently equal this clinician —
+  // the same column the roster query and disconnect flow already use as
+  // the single source of truth for "who can see this patient's data", so
+  // a revoked/disconnected patient's reports stop being reachable the
+  // instant they disconnect, with no separate permission to keep in sync.
+  'GET /api/clinic/:clinicianId/patients/:patientId/reports/:reportId': async (req, res, params) => {
+    if (!isValidUUID(params.clinicianId)) return json(res, { error: 'Invalid clinician ID format' }, 400)
+    if (!isValidUUID(params.patientId)) return json(res, { error: 'Invalid patient ID format' }, 400)
+    if (!isValidUUID(params.reportId)) return json(res, { error: 'Invalid report ID format' }, 400)
+    if (!(await verifyUserAuth(req, res, params.clinicianId))) return
+
+    const patientRows = await teamDb(`SELECT clinician_id FROM users WHERE id = ?`, [params.patientId])
+    if (patientRows.length === 0) return json(res, { error: 'Patient not found' }, 404)
+    if (patientRows[0].clinician_id !== params.clinicianId) {
+      return json(res, { error: 'This patient is not linked to your account' }, 403)
+    }
+
+    const reportRows = await teamDb(
+      `SELECT id, report_type, start_date, end_date, report_data, generated_at, shared_count FROM doctor_reports WHERE id = ? AND user_id = ?`,
+      [params.reportId, params.patientId]
+    )
+    if (reportRows.length === 0) return json(res, { error: 'Report not found' }, 404)
+    const report = reportRows[0]
+
+    // Best-effort view-count bump — a failure here shouldn't block the
+    // clinician from actually seeing the report they just requested.
+    try {
+      await teamDb(`UPDATE doctor_reports SET shared_count = shared_count + 1 WHERE id = ?`, [report.id])
+    } catch (e) {
+      console.error('Failed to increment shared_count:', e.message)
+    }
+
+    let reportData
+    try {
+      reportData = JSON.parse(report.report_data)
+    } catch (e) {
+      reportData = null
+    }
+
+    json(res, {
+      id: report.id,
+      type: report.report_type,
+      startDate: report.start_date,
+      endDate: report.end_date,
+      generatedAt: report.generated_at,
+      sharedCount: report.shared_count + 1,
+      reportData,
+    })
+  },
+
   // ===== CLINIC: PATIENT ROSTER =====
   // Real linked patients for a clinician's dashboard, replacing the mock
   // patient list. Deliberately returns only the summary fields a roster

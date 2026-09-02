@@ -6,7 +6,8 @@
  * Helps surgeons prioritize exploration areas during laparoscopy.
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
+import { saveDoctorReport, getUserId } from '../services/dbService'
 
 // Symptom Pattern → Lesion Location Mapping (from clinical-logic-advanced-reports.md)
 const LESION_MAP = [
@@ -28,8 +29,10 @@ const LESION_MAP = [
 
 const CONFIDENCE_ORDER = { 'Very High': 4, 'High': 3, 'Moderate': 2, 'Low': 1 }
 
-export default function SurgicalPlanningSummary({ patterns }) {
+export default function SurgicalPlanningSummary({ patterns, userId }) {
   const [expandedLesion, setExpandedLesion] = useState(null)
+  // 'idle' | 'saving' | 'saved' | 'error'
+  const [syncStatus, setSyncStatus] = useState('idle')
 
   // Extract relevant symptoms from the pattern recognition data
   const lesionAssessments = useMemo(() => {
@@ -85,6 +88,35 @@ export default function SurgicalPlanningSummary({ patterns }) {
 
   const hasData = lesionAssessments.length > 0
 
+  // Saved as its own report_type ('lesion_mapping', kept separate from
+  // the general DoctorReport summary) so a clinician's Report Vault
+  // lists it distinctly — this is a surgical-planning artifact, not a
+  // symptom/pain overview, and the two shouldn't be merged into one
+  // record just because they're both "reports".
+  const handleShareWithDoctor = useCallback(async () => {
+    setSyncStatus('saving')
+    try {
+      await saveDoctorReport({
+        userId: userId || getUserId(),
+        reportType: 'lesion_mapping',
+        reportData: {
+          lesionAssessments: lesionAssessments.map(l => ({
+            location: l.location,
+            pattern: l.pattern,
+            confidenceLevel: l.confidenceLevel,
+            rationale: l.rationale || null,
+            score: l.score,
+            maxScore: l.maxScore,
+          })),
+        },
+      })
+      setSyncStatus('saved')
+    } catch (err) {
+      console.error('Failed to save surgical planning summary:', err)
+      setSyncStatus('error')
+    }
+  }, [lesionAssessments, userId])
+
   if (!hasData) {
     return (
       <div className="card text-center py-8">
@@ -103,6 +135,22 @@ export default function SurgicalPlanningSummary({ patterns }) {
           <p className="text-xs text-gray-500 mt-0.5">Suspected lesion locations based on logged symptom patterns</p>
         </div>
         <span className="bg-gradient-to-r from-endo-purple to-endo-pink text-white text-[10px] font-bold px-2 py-1 rounded-full">PREMIUM</span>
+      </div>
+
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={handleShareWithDoctor}
+          disabled={syncStatus === 'saving'}
+          className="px-3 py-1.5 text-xs font-medium rounded-full bg-endo-purple/10 text-endo-purple hover:bg-endo-purple/20 disabled:opacity-50"
+        >
+          {syncStatus === 'saving' ? 'Sharing…' : '📤 Share with Doctor'}
+        </button>
+        {syncStatus === 'saved' && (
+          <span className="text-xs text-green-600">✓ Synced to your linked clinician, if you have one</span>
+        )}
+        {syncStatus === 'error' && (
+          <span className="text-xs text-amber-600">Couldn't sync — try again</span>
+        )}
       </div>
 
       <div className="space-y-3">

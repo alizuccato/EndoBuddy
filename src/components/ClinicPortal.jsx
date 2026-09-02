@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { getClinicPatients, getClinicInvitations, generateClinicInvitation } from '../services/dbService'
+import { getClinicPatients, getClinicInvitations, generateClinicInvitation, getClinicPatientReport } from '../services/dbService'
 
 const STATUS_CONFIG = {
   tracking: { label: 'TRACKING', class: 'bg-blue-100 text-blue-700' },
@@ -50,6 +50,13 @@ export default function ClinicPortal({ clinician }) {
   const [inviteAccessLevel, setInviteAccessLevel] = useState('standard')
   const [generatingInvite, setGeneratingInvite] = useState(false)
   const [latestInviteCode, setLatestInviteCode] = useState('')
+
+  // Report Vault detail viewer: which report (if any) is currently open,
+  // its full content once loaded, and load state/error.
+  const [viewingReportId, setViewingReportId] = useState(null)
+  const [reportDetail, setReportDetail] = useState(null)
+  const [loadingReport, setLoadingReport] = useState(false)
+  const [reportLoadError, setReportLoadError] = useState(null)
 
   const clinicianId = clinician?.id
 
@@ -111,6 +118,28 @@ export default function ClinicPortal({ clinician }) {
       setGeneratingInvite(false)
     }
   }
+
+  const handleOpenReport = useCallback(async (patientId, reportId) => {
+    setViewingReportId(reportId)
+    setReportDetail(null)
+    setReportLoadError(null)
+    setLoadingReport(true)
+    try {
+      const detail = await getClinicPatientReport(clinicianId, patientId, reportId)
+      setReportDetail(detail)
+    } catch (e) {
+      console.error('Failed to load report:', e)
+      setReportLoadError('Could not load this report. It may have been removed, or the patient may have disconnected.')
+    } finally {
+      setLoadingReport(false)
+    }
+  }, [clinicianId])
+
+  const closeReport = useCallback(() => {
+    setViewingReportId(null)
+    setReportDetail(null)
+    setReportLoadError(null)
+  }, [])
 
   const filteredPatients = useMemo(() => {
     if (!searchQuery) return patients
@@ -359,20 +388,134 @@ export default function ClinicPortal({ clinician }) {
               <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">Report Vault</h3>
               <div className="space-y-2 mb-2">
                 {patientDetail.reports.length > 0 ? patientDetail.reports.map(report => (
-                  <div key={report.id} className="p-3 bg-gray-50 rounded-lg flex items-center justify-between">
+                  <button
+                    key={report.id}
+                    onClick={() => handleOpenReport(patientDetail.id, report.id)}
+                    className="w-full p-3 bg-gray-50 rounded-lg flex items-center justify-between hover:bg-gray-100 transition-colors text-left"
+                  >
                     <div className="flex items-center gap-2.5">
-                      <span className="text-sm">📄</span>
+                      <span className="text-sm">{report.type === 'lesion_mapping' ? '🔬' : '📄'}</span>
                       <p className="text-xs font-medium text-gray-700 capitalize">{report.type.replace(/_/g, ' ')}</p>
                     </div>
                     <span className="text-[10px] text-gray-400">{formatRelativeDate(report.generatedAt)}</span>
-                  </div>
+                  </button>
                 )) : (
                   <p className="text-xs text-gray-400 py-3 text-center">No reports shared yet.</p>
                 )}
               </div>
-              <p className="text-[10px] text-gray-400">
-                Detailed pain-trend charts and symptom breakdowns for individual patients aren't wired up yet — flagging as a follow-up.
-              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ===== REPORT DETAIL MODAL ===== */}
+        {viewingReportId && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={closeReport}>
+            <div
+              className="bg-white rounded-xl border border-gray-200 max-w-2xl w-full max-h-[85vh] overflow-y-auto"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white">
+                <h3 className="text-sm font-bold text-gray-900 capitalize">
+                  {reportDetail ? `${reportDetail.type.replace(/_/g, ' ')} Report` : 'Report'}
+                </h3>
+                <button onClick={closeReport} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+              </div>
+
+              <div className="p-5">
+                {loadingReport && <p className="text-xs text-gray-400 py-6 text-center">Loading report…</p>}
+                {reportLoadError && <p className="text-xs text-red-600 py-6 text-center">{reportLoadError}</p>}
+
+                {reportDetail && reportDetail.type === 'general' && (
+                  <div className="space-y-5">
+                    <p className="text-[10px] text-gray-400">
+                      Period {reportDetail.startDate} – {reportDetail.endDate} · Generated {formatRelativeDate(reportDetail.generatedAt)}
+                      {reportDetail.reportData?.patientName ? ` · ${reportDetail.reportData.patientName}` : ''}
+                    </p>
+
+                    <div className="grid grid-cols-4 gap-3">
+                      <div className="bg-gray-50 rounded-lg p-3 text-center">
+                        <p className="text-lg font-bold text-gray-900">{reportDetail.reportData?.avgPain ?? '—'}</p>
+                        <p className="text-[10px] text-gray-500">Avg Pain</p>
+                      </div>
+                      <div className="bg-red-50 rounded-lg p-3 text-center">
+                        <p className="text-lg font-bold text-red-600">{reportDetail.reportData?.severeDays ?? '—'}</p>
+                        <p className="text-[10px] text-red-600">Severe Days</p>
+                      </div>
+                      <div className="bg-orange-50 rounded-lg p-3 text-center">
+                        <p className="text-lg font-bold text-orange-600">{reportDetail.reportData?.moderateDays ?? '—'}</p>
+                        <p className="text-[10px] text-orange-600">Moderate Days</p>
+                      </div>
+                      <div className="bg-green-50 rounded-lg p-3 text-center">
+                        <p className="text-lg font-bold text-green-600">{reportDetail.reportData?.totalLoggedDays ?? '—'}</p>
+                        <p className="text-[10px] text-green-600">Tracked Days</p>
+                      </div>
+                    </div>
+
+                    {reportDetail.reportData?.topSymptoms?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-700 mb-2">Primary Symptoms</p>
+                        <div className="space-y-1">
+                          {reportDetail.reportData.topSymptoms.map(([name, count]) => (
+                            <div key={name} className="flex items-center justify-between text-xs bg-gray-50 rounded px-2.5 py-1.5">
+                              <span className="text-gray-700">{name}</span>
+                              <span className="text-gray-400">{count}x</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {reportDetail.reportData?.dailyLog?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-700 mb-2">Daily Detail Log</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-[11px]">
+                            <thead>
+                              <tr className="text-left text-gray-400">
+                                <th className="py-1 pr-2">Date</th>
+                                <th className="py-1 pr-2">Phase</th>
+                                <th className="py-1 pr-2">Pain</th>
+                                <th className="py-1 pr-2">Symptoms</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {reportDetail.reportData.dailyLog.map(d => (
+                                <tr key={d.date} className="border-t border-gray-50">
+                                  <td className="py-1 pr-2 text-gray-600">{d.date}</td>
+                                  <td className="py-1 pr-2 text-gray-600 capitalize">{d.phase || '—'}</td>
+                                  <td className="py-1 pr-2 text-gray-600">{d.painLevel}/10</td>
+                                  <td className="py-1 pr-2 text-gray-600">{(d.symptoms || []).join(', ') || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {reportDetail && reportDetail.type === 'lesion_mapping' && (
+                  <div className="space-y-3">
+                    <p className="text-[10px] text-gray-400">Generated {formatRelativeDate(reportDetail.generatedAt)}</p>
+                    {(reportDetail.reportData?.lesionAssessments || []).length === 0 ? (
+                      <p className="text-xs text-gray-400 py-6 text-center">No lesion assessments in this report.</p>
+                    ) : reportDetail.reportData.lesionAssessments.map((lesion, idx) => (
+                      <div key={idx} className="border border-gray-100 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs font-medium text-gray-800">{idx + 1}. {lesion.location}</p>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-gray-50 text-gray-600 border-gray-200">
+                            {lesion.confidenceLevel}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 mb-1">Matched: {lesion.pattern}</p>
+                        {lesion.rationale && <p className="text-[11px] text-gray-600">{lesion.rationale}</p>}
+                        <p className="text-[10px] text-gray-400 mt-1">Evidence: {lesion.score}/{lesion.maxScore}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

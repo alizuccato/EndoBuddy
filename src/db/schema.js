@@ -91,4 +91,10 @@ export const PATTERN_TYPES = [
   'medication_effectiveness',
 ]
 
-export const REPORT_TYPES = ['full', 'symptom_summary', 'cycle_summary']
+// 'general' = the standard clinical summary from DoctorReport.jsx
+// (pain/symptom/cycle stats + daily log).
+// 'lesion_mapping' = the AI-generated symptom-pattern -> suspected lesion
+// location assessment from SurgicalPlanningSummary.jsx. Kept as a
+// separate report_type (rather than folded into 'general') so a
+// clinician's Report Vault can list/filter them independently.
+export const REPORT_TYPES = ['general', 'lesion_mapping']

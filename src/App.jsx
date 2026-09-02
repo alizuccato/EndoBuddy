@@ -362,7 +362,7 @@ function App() {
           {isPatient && !showLoggingFlow && currentView==='home' && <PhaseAwareHome onStartLogging={handleOpenLogging} todayLogged={todayLogged} recentLogs={recentLogs} cycleData={cycleData} isPremium={isPremium} onUpgrade={handleStartUpgrade} />}
           {isPatient && !showLoggingFlow && currentView==='insights' && <InsightsDashboard cycleData={cycleData} insights={patterns} />}
           {isPatient && !showLoggingFlow && currentView==='premium' && <PremiumView isPremium={isPremium} onUpgrade={handleStartUpgrade} cycleData={cycleData} patterns={patterns} userId={userId} />}
-          {currentView==='reports' && <ReportsView recentLogs={recentLogs} cycleData={cycleData} patterns={patterns} />}
+          {currentView==='reports' && <ReportsView recentLogs={recentLogs} cycleData={cycleData} patterns={patterns} userId={userId} />}
           {currentView==='profile' && (
             <ProfileTab
               userId={userId}
@@ -436,7 +436,7 @@ function NavBtn({ currentView, view, onClick, active, children }) {
   )
 }
 
-function ReportsView({ recentLogs, cycleData, patterns }) {
+function ReportsView({ recentLogs, cycleData, patterns, userId }) {
   const [showFeedback, setShowFeedback] = useState(true)
   if (recentLogs.length === 0) return (
     <div className="max-w-4xl mx-auto px-6 py-8 pb-24 md:pb-8">
@@ -450,7 +450,7 @@ function ReportsView({ recentLogs, cycleData, patterns }) {
   )
   return (
     <>
-      <DoctorReport cycleData={cycleData} insights={patterns} onBack={()=>{}} />
+      <DoctorReport cycleData={cycleData} insights={patterns} onBack={()=>{}} userId={userId} />
       <div className="max-w-4xl mx-auto px-6 pb-8">
         {showFeedback && <FeedbackPrompt type="doctor_report" targetId="report-1" targetLabel="Clinical Doctor Report" onDismiss={()=>setShowFeedback(false)} />}
       </div>
@@ -502,7 +502,7 @@ function PremiumView({ isPremium, onUpgrade, cycleData, patterns, userId }) {
       {premiumTab==='meals'&&(isPremium?<PremiumMealPlans currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="meals"/>)}
       {premiumTab==='exercises'&&(isPremium?<PremiumExercises currentPhase={phase}/>:<LockedFeature onUpgrade={onUpgrade} feature="exercises"/>)}
       {premiumTab==='deep'&&(isPremium?<div className="space-y-4"><PremiumDeepReport cycleData={cycleData} patterns={patterns}/></div>:<LockedFeature onUpgrade={onUpgrade} feature="deep"/>)}
-      {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns}/>:<LockedFeature onUpgrade={onUpgrade} feature="surgical"/>)}
+      {premiumTab==='surgical'&&(isPremium?<SurgicalPlanningSummary patterns={patterns} userId={userId}/>:<LockedFeature onUpgrade={onUpgrade} feature="surgical"/>)}
       {premiumTab==='treatment'&&(isPremium?<TreatmentResponseDashboard userId={userId}/>:<LockedFeature onUpgrade={onUpgrade} feature="treatment"/>)}
       {premiumTab==='viz'&&(isPremium?<PremiumVisualizations patterns={patterns} days={cycleData?.days} currentDayNum={cycleData?.currentDayNum} cycleLength={cycleData?.cycleLength}/>:<LockedFeature onUpgrade={onUpgrade} feature="viz"/>)}
     </div>

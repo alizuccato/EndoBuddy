@@ -14,15 +14,25 @@
  * Features: Generate PDF (via browser print), Share, Date range selection
  */
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { getPainColor, PHASE_STYLES, PHASE_ORDER } from '../utils/mockData'
 import { getLocalDateString } from '../utils/dateHelpers'
+import { saveDoctorReport, getUserId } from '../services/dbService'
 
-export default function DoctorReport({ cycleData, insights, onBack }) {
+export default function DoctorReport({ cycleData, insights, onBack, userId }) {
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
   const [patientName, setPatientName] = useState('')
   const [doctorName, setDoctorName] = useState('')
   const [showReport, setShowReport] = useState(false)
+  // 'idle' | 'saving' | 'saved' | 'error' — surfaced next to the report
+  // actions so the patient knows whether this copy actually reached their
+  // linked clinician's Report Vault, not just their own screen/printer.
+  const [syncStatus, setSyncStatus] = useState('idle')
+  // Generating the report twice in one session (e.g. tweaking the date
+  // range and regenerating) shouldn't create duplicate rows in the
+  // clinician's vault for what the patient thinks of as "the same
+  // report" — only save once per distinct generated view.
+  const savedForRef = useRef(null)
 
   const { days, cycleLength, periodLength, cycleStartDate } = cycleData || {}
 
@@ -81,6 +91,46 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
     setShowReport(true)
     setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 100)
   }, [])
+
+  // Persists the report to doctor_reports as soon as it's generated, so
+  // it shows up in the linked clinician's Report Vault without requiring
+  // a separate "send" action — matching how the clinic link itself
+  // already works (one accept, then everything after is automatic).
+  useEffect(() => {
+    if (!showReport || !reportData) return
+    const signature = JSON.stringify({ dateRange, patientName, doctorName })
+    if (savedForRef.current === signature) return
+    savedForRef.current = signature
+
+    let cancelled = false
+    setSyncStatus('saving')
+    saveDoctorReport({
+      userId: userId || getUserId(),
+      reportType: 'general',
+      startDate: dateRange.start,
+      endDate: dateRange.end,
+      reportData: {
+        ...reportData,
+        patientName: patientName || null,
+        doctorName: doctorName || null,
+        dailyLog: (days || [])
+          .filter(d => !d.isFuture && d.painLevel > 0)
+          .slice(0, 30)
+          .map(d => ({
+            date: d.date, dayNum: d.dayNum, phase: d.phase, painLevel: d.painLevel,
+            flowLevel: d.flowLevel || null,
+            symptoms: (d.symptoms || []).map(s => s.name),
+          })),
+      },
+    }).then(() => {
+      if (!cancelled) setSyncStatus('saved')
+    }).catch(err => {
+      console.error('Failed to save doctor report:', err)
+      if (!cancelled) setSyncStatus('error')
+    })
+
+    return () => { cancelled = true }
+  }, [showReport, reportData, dateRange, patientName, doctorName, days, userId])
 
   const handlePrint = useCallback(() => {
     window.print()
@@ -253,7 +303,16 @@ export default function DoctorReport({ cycleData, insights, onBack }) {
           </svg>
           Back to Editor
         </button>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {syncStatus === 'saving' && (
+            <span className="text-xs text-gray-400">Syncing to clinician…</span>
+          )}
+          {syncStatus === 'saved' && (
+            <span className="text-xs text-green-600">✓ Synced to your linked clinician, if you have one</span>
+          )}
+          {syncStatus === 'error' && (
+            <span className="text-xs text-amber-600">Couldn't sync — use Share/Print instead</span>
+          )}
           <button onClick={handlePrint} className="btn-primary text-sm px-6 py-2.5">
             🖨️ Save as PDF / Print
           </button>
